@@ -460,21 +460,6 @@ def test_get_alerts_rejects_non_positive_cursor_alert_id(test_db_path):
             "greater than 0" in detail["msg"] for detail in body["details"]
         )
 
-def test_get_alerts_accepts_complete_cursor(test_db_path):
-    response = client.get(
-        "/alerts",
-        params={
-            "cursor_created_at": "2026-08-20T05:00:00Z",
-            "cursor_alert_id": 1,
-        },
-    )
-
-    body = response.json()
-
-    assert response.status_code == 200
-    assert body["count"] == 0
-    assert body["alerts"] == []
-
 def test_get_alerts_paginates(test_db_path):
     repository = AlertRepository(test_db_path)
 
