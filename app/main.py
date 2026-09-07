@@ -11,7 +11,7 @@ from app.db.alert_repository import AlertRepository, PersistenceError
 from app.db.connection import init_db
 from app.services.evaluation_service import CoreValidationException, evaluate_request
 from app.utils.trace import generate_trace_id
-from app.schemas import AlertDetailResponse, AlertListResponse, AlertSearchQuery, EvaluateRequest, EvaluateResponse
+from app.schemas import AlertDetailResponse, AlertListResponse, AlertSearchQuery, AlertCursorResponse, EvaluateRequest, EvaluateResponse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATABASE_PATH = PROJECT_ROOT / "data" / "alert.db"
@@ -136,18 +136,36 @@ def get_alert_by_id_endpoint(alert_id: int, repository: AlertRepository = Depend
 
 @app.get("/alerts", response_model=AlertListResponse)
 def get_alerts_endpoint(search_query: Annotated[AlertSearchQuery, Query()], repository: AlertRepository = Depends(get_alert_repository)) -> AlertListResponse:
-    details = repository.search(
-        limit=search_query.limit,
+    requested_limit = search_query.limit
+
+    fetched_details = repository.search(
+        limit=requested_limit + 1,
         level=search_query.level,
         human_required=search_query.human_required,
         created_from=search_query.created_from,
-        created_to=search_query.created_to
+        created_to=search_query.created_to,
+        cursor_created_at=search_query.cursor_created_at,
+        cursor_alert_id=search_query.cursor_alert_id,
     )
 
-    alerts = [AlertDetailResponse.model_validate(detail) for detail in details]
+    has_next_page = len(fetched_details) > requested_limit
+    page_details = fetched_details[:requested_limit] # limit 까지만
+
+    alerts = [AlertDetailResponse.model_validate(detail) for detail in page_details] # model_validate(): 응답 필드가 올바르게 존재하는지 확인
+
+    next_cursor: AlertCursorResponse | None = None
+
+    if has_next_page:
+        cursor_source = page_details[-1] # next_cusor 기준
+
+        next_cursor = AlertCursorResponse(
+            created_at=cursor_source.created_at,
+            alert_id=cursor_source.alert_id,
+        )
 
     return AlertListResponse(
         count=len(alerts),
-        limit=search_query.limit,
-        alerts=alerts
+        limit=requested_limit,
+        alerts=alerts,
+        next_cursor=next_cursor,
     )

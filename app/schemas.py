@@ -56,11 +56,20 @@ class AlertSearchQuery(BaseModel):
     human_required: bool | None = None
     created_from: AwareDatetime | None = None
     created_to: AwareDatetime | None = None
+    cursor_created_at: AwareDatetime | None = None
+    cursor_alert_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def validate_created_at_range(self) -> "AlertSearchQuery":
         if self.created_from is not None and self.created_to is not None and self.created_from >= self.created_to:
             raise ValueError("created_from must be earlier than created_to")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_cursor_pair(self) -> "AlertSearchQuery":
+        if (self.cursor_created_at is None)!= (self.cursor_alert_id is None):
+            raise ValueError("cursor_created_at and cursor_alert_id must be provided together")
 
         return self
 
@@ -82,8 +91,12 @@ class AlertDetailResponse(BaseModel):
     signals: list[SignalResponse]
     metadata: dict[str, Any]
 
+class AlertCursorResponse(BaseModel):
+    created_at: AwareDatetime
+    alert_id: int = Field(gt=0)
 
 class AlertListResponse(BaseModel):
     count: int
     limit: int
     alerts: list[AlertDetailResponse]
+    next_cursor: AlertCursorResponse | None = None
