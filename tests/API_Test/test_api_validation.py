@@ -1,10 +1,27 @@
 from fastapi.testclient import TestClient
 
+from app.db.alert_repository import AlertRepository
 from app.main import app
 
 client = TestClient(app)
 
-def test_missing_required_field():
+def test_missing_required_field_does_not_save(test_db_path, monkeypatch):
+    save_calls = []
+
+    def fake_save(self, alert, trace_id):
+        save_calls.append(
+            {
+                "alert": alert,
+                "trace_id": trace_id,
+            }
+        )
+
+    monkeypatch.setattr(
+        AlertRepository,
+        "save",
+        fake_save,
+    )
+
     payload = {
         # event_id 누락
         "decision_type": "approve",
@@ -18,6 +35,7 @@ def test_missing_required_field():
     response = client.post("/evaluate", json=payload)
 
     assert response.status_code == 422
+    assert save_calls == []
 
 def test_invalid_confidence_field():
     payload = {

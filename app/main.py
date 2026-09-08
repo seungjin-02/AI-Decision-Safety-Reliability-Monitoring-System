@@ -14,7 +14,7 @@ from app.utils.trace import generate_trace_id
 from app.schemas import AlertDetailResponse, AlertListResponse, AlertSearchQuery, AlertCursorResponse, EvaluateRequest, EvaluateResponse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATABASE_PATH = PROJECT_ROOT / "data" / "alert.db"
+DATABASE_PATH = PROJECT_ROOT / "data" / "alerts.db"
 
 def get_alert_repository() -> AlertRepository:
     return AlertRepository(DATABASE_PATH)
