@@ -11,6 +11,34 @@ def create_connection(db_path: str | Path) -> sqlite3.Connection:
 
     return connection
 
+def validate_unversioned_schema(connection: sqlite3.Connection, schema_sql: str) -> None:
+    reference_connection = create_connection(":memory:")
+
+    try:
+        reference_connection.executescript(schema_sql)
+
+        schema_query = """
+            SELECT type, name, tbl_name, sql
+            FROM sqlite_master
+            WHERE name NOT GLOB 'sqlite_*'
+            ORDER BY type, name
+        """
+
+        expected_rows = reference_connection.execute(schema_query).fetchall()
+        actual_rows = connection.execute(schema_query).fetchall()
+
+        expected_schema = [tuple(row) for row in expected_rows]
+        actual_schema = [tuple(row) for row in actual_rows]
+
+        if actual_schema != expected_schema:
+            raise RuntimeError(
+                "Unversioned database contains existing tables. "
+                "Schema does not match the supported definition."
+            )
+
+    finally:
+        reference_connection.close()
+
 def init_db(db_path: str | Path) -> None:
     connection = create_connection(db_path)
 
@@ -38,19 +66,20 @@ def init_db(db_path: str | Path) -> None:
             """
         ).fetchone()
 
-        if existing_table is not None:
-            raise RuntimeError(
-                "Unversioned database contains existing tables. "
-                "Schema verification is required."
-            )
-
         schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
-        connection.executescript("BEGIN;\n" + schema_sql)
+        if existing_table is not None:
+            # 기존 DB: 구조 확인과 버전 기록을 하나로 묶음
+            connection.execute("BEGIN;")
+            validate_unversioned_schema(connection, schema_sql)
+        else:
+            # 새 DB: 테이블 생성부터 진행
+            connection.executescript("BEGIN;\n" + schema_sql)
+
         connection.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
 
         connection.commit()
 
-    except sqlite3.Error:
+    except (sqlite3.Error, RuntimeError):
         connection.rollback()
         raise
 
