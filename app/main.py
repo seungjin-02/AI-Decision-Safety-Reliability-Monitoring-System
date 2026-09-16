@@ -1,9 +1,10 @@
 from typing import Annotated
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import FastAPI, Request, Depends, Query, status
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
@@ -11,7 +12,9 @@ from app.db.alert_repository import AlertRepository, PersistenceError
 from app.db.connection import init_db
 from app.services.evaluation_service import CoreValidationException, evaluate_request
 from app.utils.trace import generate_trace_id
+from app.utils.structured_logging import log_request_completed
 from app.schemas import AlertDetailResponse, AlertListResponse, AlertSearchQuery, AlertCursorResponse, EvaluateRequest, EvaluateResponse
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATABASE_PATH = PROJECT_ROOT / "data" / "alerts.db"
@@ -35,10 +38,50 @@ app = FastAPI(lifespan=lifespan)
 async def trace_id_middleware(request: Request, call_next):
     trace_id = generate_trace_id()
     request.state.trace_id = trace_id
-    response = await call_next(request)
-    response.headers["X-Trace-ID"] = trace_id
+    request.state.failure_stage = None
 
-    return response
+    started_at = perf_counter()
+    status_code = 500
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["X-Trace-ID"] = trace_id
+
+        return response
+
+    finally:
+        duration_ms = (perf_counter() - started_at) * 1000
+
+        failure_stage = request.state.failure_stage
+
+        if status_code >= 400 and failure_stage is None:
+            failure_stage = "unknown"
+
+        log_request_completed(
+            trace_id=trace_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            failure_stage=failure_stage,
+        )
+
+@app.exception_handler(ResponseValidationError)
+async def response_validation_exception_handler(request: Request, exc: ResponseValidationError):
+    request.state.failure_stage = "response_validation"
+    trace_id = request.state.trace_id
+
+    return JSONResponse(
+        status_code=500,
+        headers={"X-Trace-ID": trace_id},
+        content={
+            "trace_id": trace_id,
+            "error_type": "system_error",
+            "message": "Unexpected internal server error",
+            "details": [],
+        },
+    )
 
 @app.exception_handler(RequestValidationError)
 async def api_validation_exception_handler(request: Request, exc: RequestValidationError):
