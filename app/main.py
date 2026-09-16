@@ -85,6 +85,7 @@ async def response_validation_exception_handler(request: Request, exc: ResponseV
 
 @app.exception_handler(RequestValidationError)
 async def api_validation_exception_handler(request: Request, exc: RequestValidationError):
+    request.state.failure_stage = "api_validation"
     trace_id = request.state.trace_id
 
     return JSONResponse(
@@ -101,6 +102,7 @@ async def api_validation_exception_handler(request: Request, exc: RequestValidat
 
 @app.exception_handler(CoreValidationException)
 async def core_validation_exception_handler(request: Request, exc: CoreValidationException):
+    request.state.failure_stage = "core_evaluation"
     trace_id = request.state.trace_id
 
     return JSONResponse(
@@ -115,6 +117,7 @@ async def core_validation_exception_handler(request: Request, exc: CoreValidatio
 
 @app.exception_handler(PersistenceError)
 async def persistence_exception_handler(request: Request, exc: PersistenceError):
+    request.state.failure_stage = "persistence"
     trace_id = request.state.trace_id
 
     return JSONResponse(
