@@ -20,6 +20,7 @@ def log_request_completed(
     status_code: int,
     duration_ms: float,
     failure_stage: str | None,
+    persistence_outcome: str,
 ) -> None:
     log_level = logging.ERROR if status_code >= 500 else logging.INFO
 
@@ -36,6 +37,7 @@ def log_request_completed(
         "result": result,
         "duration_ms": round(duration_ms, 3),
         "failure_stage": failure_stage,
+        "persistence_outcome": persistence_outcome,
     }
 
     request_logger.log(

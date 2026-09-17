@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.db.alert_repository import AlertRepository, PersistenceError
 from app.db.connection import init_db
-from app.services.evaluation_service import CoreValidationException, evaluate_request
+from app.services.evaluation_service import CoreValidationException, evaluate_request, alert_to_response
 from app.utils.trace import generate_trace_id
 from app.utils.structured_logging import log_request_completed
 from app.schemas import AlertDetailResponse, AlertListResponse, AlertSearchQuery, AlertCursorResponse, EvaluateRequest, EvaluateResponse
@@ -39,6 +39,7 @@ async def trace_id_middleware(request: Request, call_next):
     trace_id = generate_trace_id()
     request.state.trace_id = trace_id
     request.state.failure_stage = None
+    request.state.persistence_outcome = "not_attempted"
 
     started_at = perf_counter()
     status_code = 500
@@ -65,6 +66,7 @@ async def trace_id_middleware(request: Request, call_next):
             status_code=status_code,
             duration_ms=duration_ms,
             failure_stage=failure_stage,
+            persistence_outcome=request.state.persistence_outcome,
         )
 
 @app.exception_handler(ResponseValidationError)
@@ -118,6 +120,7 @@ async def core_validation_exception_handler(request: Request, exc: CoreValidatio
 @app.exception_handler(PersistenceError)
 async def persistence_exception_handler(request: Request, exc: PersistenceError):
     request.state.failure_stage = "persistence"
+    request.state.persistence_outcome = exc.persistence_outcome
     trace_id = request.state.trace_id
 
     return JSONResponse(
@@ -168,8 +171,15 @@ async def alert_not_found_exception_handler(request: Request, exc: AlertNotFound
 @app.post("/evaluate", response_model=EvaluateResponse, status_code=status.HTTP_201_CREATED)
 def evaluate_endpoint(payload: EvaluateRequest, request: Request, repository: AlertRepository = Depends(get_alert_repository)):
     trace_id = request.state.trace_id
+    evaluation_result = evaluate_request(payload, trace_id, repository)
 
-    return evaluate_request(payload, trace_id, repository)
+    request.state.persistence_outcome = "committed"
+
+    return alert_to_response(
+        alert=evaluation_result.alert,
+        trace_id=trace_id,
+        saved_alert=evaluation_result.saved_alert,
+    )
 
 @app.get("/alerts/{alert_id}", response_model=AlertDetailResponse)
 def get_alert_by_id_endpoint(alert_id: int, repository: AlertRepository = Depends(get_alert_repository))  -> AlertDetailResponse:
