@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from fastapi.testclient import TestClient
@@ -6,7 +7,7 @@ from app.main import app
 
 client = TestClient(app)
 
-def test_evaluate_endpoint(test_db_path):
+def test_evaluate_endpoint(test_db_path, request_log_records):
     payload = {
         "event_id": "evt_api_test_001",
         "decision_type": "approve",
@@ -19,6 +20,42 @@ def test_evaluate_endpoint(test_db_path):
 
     response = client.post("/evaluate", json=payload)
     body = response.json()
+
+    log_entries = [
+        json.loads(record.getMessage()) for record in request_log_records if record.name == "app.request"
+    ]
+
+    request_completed_logs = [
+        entry for entry in log_entries if entry["event"] == "request_completed"
+    ]
+
+    assert len(request_completed_logs) == 1
+
+    request_log = request_completed_logs[0]
+
+    assert set(request_log.keys()) == {
+        "timestamp",
+        "level",
+        "event",
+        "trace_id",
+        "method",
+        "path",
+        "status_code",
+        "result",
+        "duration_ms",
+        "failure_stage",
+        "persistence_outcome",
+    }
+
+    assert request_log["level"] == "INFO"
+    assert request_log["event"] == "request_completed"
+    assert request_log["method"] == "POST"
+    assert request_log["path"] == "/evaluate"
+    assert request_log["status_code"] == 201
+    assert request_log["result"] == "success"
+    assert request_log["failure_stage"] is None
+    assert request_log["persistence_outcome"] == "committed"
+    assert request_log["duration_ms"] >= 0
 
     assert response.status_code == 201
     assert body["event_id"] == payload["event_id"]
@@ -61,7 +98,11 @@ def test_evaluate_endpoint(test_db_path):
         assert alert_row is not None
         assert alert_row["alert_id"] == body["alert_id"]
         assert alert_row["trace_id"] == body["trace_id"]
+
         assert body["trace_id"] == response.headers["x-trace-id"]
+        assert response.headers["x-trace-id"] == body["trace_id"]
+        assert request_log["trace_id"] == body["trace_id"]
+        assert alert_row["trace_id"] == body["trace_id"]
 
         response_created_at = datetime.fromisoformat(body["created_at"].replace("Z", "+00:00"))
         database_created_at = datetime.fromisoformat(alert_row["created_at"])
