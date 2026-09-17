@@ -51,7 +51,10 @@ def test_repository_save_failure_returns_persistence_error():
 
         def save(self, alert, trace_id):
             self.save_called = True
-            raise PersistenceError("injected database failure")
+            raise PersistenceError(
+                "injected database failure",
+                persistence_outcome="rolled_back",
+            )
 
     failing_repository = FailingRepository()
 

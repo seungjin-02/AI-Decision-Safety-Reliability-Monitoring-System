@@ -268,7 +268,10 @@ class AlertRepository:
             )
 
         except (sqlite3.Error, json.JSONDecodeError) as exc:
-            raise PersistenceError("Failed to find alert by id") from exc
+            raise PersistenceError(
+                "Failed to find alert by id",
+                persistence_outcome="not_attempted",
+            ) from exc
 
         finally:
             connection.close()
@@ -481,7 +484,10 @@ class AlertRepository:
             return alert_details
 
         except (sqlite3.Error, json.JSONDecodeError) as exc:
-            raise PersistenceError("Failed to search alerts") from exc
+            raise PersistenceError(
+                "Failed to search alerts",
+                persistence_outcome="not_attempted",
+            ) from exc
 
         finally:
             connection.close()
