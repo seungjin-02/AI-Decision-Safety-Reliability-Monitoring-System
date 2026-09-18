@@ -129,7 +129,7 @@ async def persistence_exception_handler(request: Request, exc: PersistenceError)
         content={
             "trace_id": trace_id,
             "error_type": "persistence_error",
-            "message": "Failed to persist evaluation result",
+            "message": "Database operation failed",
             "details": [],
         },
     )
@@ -151,6 +151,7 @@ async def system_exception_handler(request: Request, exc: Exception):
 
 @app.exception_handler(AlertNotFoundException)
 async def alert_not_found_exception_handler(request: Request, exc: AlertNotFoundException):
+    request.state.failure_stage = "resource_lookup"
     trace_id = request.state.trace_id
 
     return JSONResponse(

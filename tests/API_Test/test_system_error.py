@@ -91,7 +91,7 @@ def test_repository_save_failure_returns_persistence_error():
         "details",
     }
     assert body["error_type"] == "persistence_error"
-    assert body["message"] == "Failed to persist evaluation result"
+    assert body["message"] == "Database operation failed"
     assert "x-trace-id" in response.headers
     assert body["trace_id"] == response.headers["x-trace-id"]
     assert body["details"] == []
@@ -132,7 +132,7 @@ def test_db_rolled_back(test_db_path, monkeypatch):
     body = response.json()
 
     assert body["error_type"] == "persistence_error"
-    assert body["message"] == "Failed to persist evaluation result"
+    assert body["message"] == "Database operation failed"
     assert body["trace_id"] == response.headers["x-trace-id"]
 
     connection = create_connection(test_db_path)
