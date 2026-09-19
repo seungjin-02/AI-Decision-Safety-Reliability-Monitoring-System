@@ -333,3 +333,4 @@ def test_response_validation_failure_after_commit_records_committed(test_db_path
 
     finally:
         connection.close()
+

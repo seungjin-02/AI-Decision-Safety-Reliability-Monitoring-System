@@ -217,3 +217,4 @@ def test_core_validation_error_does_not_save_any_rows(test_db_path, monkeypatch,
 
     finally:
         connection.close()
+

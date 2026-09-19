@@ -133,7 +133,7 @@ def test_get_alert_by_id_returns_404_when_alert_does_not_exist(test_db_path, req
     assert request_log["failure_stage"] == "resource_lookup"
     assert request_log["persistence_outcome"] == "not_attempted"
 
-    assert request_log["trace_id"] == body["trace_id"]== response.headers["x-trace-id"]
+    assert request_log["trace_id"] == body["trace_id"] == response.headers["x-trace-id"]
 
 def test_get_search_alerts_returns_empty_list(test_db_path):
     response = client.get("/alerts")
