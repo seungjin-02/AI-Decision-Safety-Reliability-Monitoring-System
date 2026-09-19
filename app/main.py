@@ -1,17 +1,20 @@
 from typing import Annotated
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import FastAPI, Request, Depends, Query, status
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
 from app.db.alert_repository import AlertRepository, PersistenceError
 from app.db.connection import init_db
-from app.services.evaluation_service import CoreValidationException, evaluate_request
+from app.services.evaluation_service import CoreValidationException, evaluate_request, alert_to_response
 from app.utils.trace import generate_trace_id
+from app.utils.structured_logging import log_request_completed
 from app.schemas import AlertDetailResponse, AlertListResponse, AlertSearchQuery, AlertCursorResponse, EvaluateRequest, EvaluateResponse
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATABASE_PATH = PROJECT_ROOT / "data" / "alerts.db"
@@ -35,13 +38,56 @@ app = FastAPI(lifespan=lifespan)
 async def trace_id_middleware(request: Request, call_next):
     trace_id = generate_trace_id()
     request.state.trace_id = trace_id
-    response = await call_next(request)
-    response.headers["X-Trace-ID"] = trace_id
+    request.state.failure_stage = None
+    request.state.persistence_outcome = "not_attempted"
 
-    return response
+    started_at = perf_counter()
+    status_code = 500
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["X-Trace-ID"] = trace_id
+
+        return response
+
+    finally:
+        duration_ms = (perf_counter() - started_at) * 1000
+
+        failure_stage = request.state.failure_stage
+
+        if status_code >= 400 and failure_stage is None:
+            failure_stage = "unknown"
+
+        log_request_completed(
+            trace_id=trace_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            failure_stage=failure_stage,
+            persistence_outcome=request.state.persistence_outcome,
+        )
+
+@app.exception_handler(ResponseValidationError)
+async def response_validation_exception_handler(request: Request, exc: ResponseValidationError):
+    request.state.failure_stage = "response_validation"
+    trace_id = request.state.trace_id
+
+    return JSONResponse(
+        status_code=500,
+        headers={"X-Trace-ID": trace_id},
+        content={
+            "trace_id": trace_id,
+            "error_type": "system_error",
+            "message": "Unexpected internal server error",
+            "details": [],
+        },
+    )
 
 @app.exception_handler(RequestValidationError)
 async def api_validation_exception_handler(request: Request, exc: RequestValidationError):
+    request.state.failure_stage = "api_validation"
     trace_id = request.state.trace_id
 
     return JSONResponse(
@@ -58,6 +104,7 @@ async def api_validation_exception_handler(request: Request, exc: RequestValidat
 
 @app.exception_handler(CoreValidationException)
 async def core_validation_exception_handler(request: Request, exc: CoreValidationException):
+    request.state.failure_stage = "core_evaluation"
     trace_id = request.state.trace_id
 
     return JSONResponse(
@@ -72,6 +119,8 @@ async def core_validation_exception_handler(request: Request, exc: CoreValidatio
 
 @app.exception_handler(PersistenceError)
 async def persistence_exception_handler(request: Request, exc: PersistenceError):
+    request.state.failure_stage = "persistence"
+    request.state.persistence_outcome = exc.persistence_outcome
     trace_id = request.state.trace_id
 
     return JSONResponse(
@@ -80,7 +129,7 @@ async def persistence_exception_handler(request: Request, exc: PersistenceError)
         content={
             "trace_id": trace_id,
             "error_type": "persistence_error",
-            "message": "Failed to persist evaluation result",
+            "message": "Database operation failed",
             "details": [],
         },
     )
@@ -102,6 +151,7 @@ async def system_exception_handler(request: Request, exc: Exception):
 
 @app.exception_handler(AlertNotFoundException)
 async def alert_not_found_exception_handler(request: Request, exc: AlertNotFoundException):
+    request.state.failure_stage = "resource_lookup"
     trace_id = request.state.trace_id
 
     return JSONResponse(
@@ -122,8 +172,15 @@ async def alert_not_found_exception_handler(request: Request, exc: AlertNotFound
 @app.post("/evaluate", response_model=EvaluateResponse, status_code=status.HTTP_201_CREATED)
 def evaluate_endpoint(payload: EvaluateRequest, request: Request, repository: AlertRepository = Depends(get_alert_repository)):
     trace_id = request.state.trace_id
+    evaluation_result = evaluate_request(payload, trace_id, repository)
 
-    return evaluate_request(payload, trace_id, repository)
+    request.state.persistence_outcome = "committed"
+
+    return alert_to_response(
+        alert=evaluation_result.alert,
+        trace_id=trace_id,
+        saved_alert=evaluation_result.saved_alert,
+    )
 
 @app.get("/alerts/{alert_id}", response_model=AlertDetailResponse)
 def get_alert_by_id_endpoint(alert_id: int, repository: AlertRepository = Depends(get_alert_repository))  -> AlertDetailResponse:

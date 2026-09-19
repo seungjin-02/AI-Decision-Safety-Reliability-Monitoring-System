@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from app.db.alert_repository import AlertRepository
@@ -5,7 +7,7 @@ from app.main import app
 
 client = TestClient(app)
 
-def test_missing_required_field_does_not_save(test_db_path, monkeypatch):
+def test_missing_required_field_does_not_save(test_db_path, monkeypatch, request_log_records):
     save_calls = []
 
     def fake_save(self, alert, trace_id):
@@ -36,6 +38,30 @@ def test_missing_required_field_does_not_save(test_db_path, monkeypatch):
 
     assert response.status_code == 422
     assert save_calls == []
+
+    body = response.json()
+
+    assert body["error_type"] == "api_validation_error"
+    assert body["trace_id"] == response.headers["x-trace-id"]
+
+    request_completed_logs = []
+
+    for record in request_log_records:
+        log_entry = json.loads(record.getMessage())
+
+        if log_entry.get("event") == "request_completed":
+            request_completed_logs.append(log_entry)
+
+    assert len(request_completed_logs) == 1
+
+    request_log = request_completed_logs[0]
+
+    assert request_log["status_code"] == 422
+    assert request_log["result"] == "failure"
+    assert request_log["failure_stage"] == "api_validation"
+    assert request_log["persistence_outcome"] == "not_attempted"
+
+    assert request_log["trace_id"] == body["trace_id"] == response.headers["x-trace-id"]
 
 def test_invalid_confidence_field():
     payload = {

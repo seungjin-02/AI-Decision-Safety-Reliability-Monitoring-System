@@ -1,4 +1,5 @@
 from typing import Any
+from dataclasses import dataclass
 
 from app.db.alert_repository import AlertRepository, SavedAlert
 from app.schemas import EvaluateRequest
@@ -11,6 +12,11 @@ class CoreValidationException(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         self.message = message
+
+@dataclass(frozen=True)
+class EvaluationResult:
+    alert: AlertOutput
+    saved_alert: SavedAlert
 
 def build_decision_event(payload: EvaluateRequest) -> DecisionEvent:
     return DecisionEvent(
@@ -50,7 +56,7 @@ def alert_to_response(alert: AlertOutput, trace_id: str, saved_alert: SavedAlert
         "metadata": alert.metadata,
     }
 
-def evaluate_request(payload: EvaluateRequest, trace_id: str, repository: AlertRepository) -> dict[str, Any]:
+def evaluate_request(payload: EvaluateRequest, trace_id: str, repository: AlertRepository) -> EvaluationResult:
     try:
         event = build_decision_event(payload)
         alert = evaluate_event(event)
@@ -59,4 +65,4 @@ def evaluate_request(payload: EvaluateRequest, trace_id: str, repository: AlertR
 
     saved_alert = repository.save(alert=alert, trace_id=trace_id)
 
-    return alert_to_response(alert=alert, trace_id=trace_id, saved_alert=saved_alert)
+    return EvaluationResult(alert=alert, saved_alert=saved_alert)

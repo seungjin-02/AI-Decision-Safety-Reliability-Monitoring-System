@@ -1,5 +1,7 @@
+import logging
 import pytest
 
+from app.utils.structured_logging import request_logger
 from app.db.alert_repository import AlertRepository
 from app.db.connection import init_db
 from app.main import app, get_alert_repository
@@ -19,3 +21,21 @@ def test_db_path(tmp_path):
 
     # 테스트가 끝난 후 실행
     app.dependency_overrides.pop(get_alert_repository, None)
+
+@pytest.fixture
+def request_log_records():
+    records: list[logging.LogRecord] = []
+
+    class CollectingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = CollectingHandler()
+    request_logger.addHandler(handler)
+
+    try:
+        yield records
+
+    finally:
+        request_logger.removeHandler(handler)
+        handler.close()
