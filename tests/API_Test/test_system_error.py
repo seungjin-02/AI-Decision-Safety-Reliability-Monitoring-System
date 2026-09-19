@@ -1,3 +1,5 @@
+import json
+
 import app.main as main_module
 import app.services.evaluation_service as service_module
 
@@ -96,7 +98,7 @@ def test_repository_save_failure_returns_persistence_error():
     assert body["trace_id"] == response.headers["x-trace-id"]
     assert body["details"] == []
 
-def test_db_rolled_back(test_db_path, monkeypatch):
+def test_db_rolled_back(test_db_path, monkeypatch, request_log_records):
     original_evaluate_event = service_module.evaluate_event
 
     def evaluate_with_duplicate_signal(event):
@@ -134,6 +136,24 @@ def test_db_rolled_back(test_db_path, monkeypatch):
     assert body["error_type"] == "persistence_error"
     assert body["message"] == "Database operation failed"
     assert body["trace_id"] == response.headers["x-trace-id"]
+
+    request_completed_logs = []
+
+    for record in request_log_records:
+        log_entry = json.loads(record.getMessage())
+
+        if log_entry.get("event") == "request_completed":
+            request_completed_logs.append(log_entry)
+
+    assert len(request_completed_logs) == 1
+
+    request_log = request_completed_logs[0]
+
+    assert request_log["status_code"] == 500
+    assert request_log["result"] == "failure"
+    assert request_log["failure_stage"] == "persistence"
+    assert request_log["persistence_outcome"] == "rolled_back"
+    assert request_log["trace_id"] == body["trace_id"] == response.headers["x-trace-id"]
 
     connection = create_connection(test_db_path)
 
