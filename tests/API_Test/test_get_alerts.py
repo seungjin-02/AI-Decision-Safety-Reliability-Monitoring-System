@@ -1,3 +1,5 @@
+import json
+
 from datetime import datetime
 from fastapi.testclient import TestClient
 from app.db.alert_repository import AlertRepository
@@ -87,7 +89,7 @@ def test_get_alert_by_id_returns_stored_alert(test_db_path):
 
     assert response_created_at == saved_created_at
 
-def test_get_alert_by_id_returns_404_when_alert_does_not_exist(test_db_path):
+def test_get_alert_by_id_returns_404_when_alert_does_not_exist(test_db_path, request_log_records):
     missing_alert_id = 999
 
     response = client.get(f"/alerts/{missing_alert_id}")
@@ -113,6 +115,25 @@ def test_get_alert_by_id_returns_404_when_alert_does_not_exist(test_db_path):
     ]
 
     assert body["trace_id"] == response.headers["x-trace-id"]
+
+    request_completed_logs = []
+
+    for record in request_log_records:
+        log_entry = json.loads(record.getMessage())
+
+        if log_entry.get("event") == "request_completed":
+            request_completed_logs.append(log_entry)
+
+    assert len(request_completed_logs) == 1
+
+    request_log = request_completed_logs[0]
+
+    assert request_log["status_code"] == 404
+    assert request_log["result"] == "failure"
+    assert request_log["failure_stage"] == "resource_lookup"
+    assert request_log["persistence_outcome"] == "not_attempted"
+
+    assert request_log["trace_id"] == body["trace_id"]== response.headers["x-trace-id"]
 
 def test_get_search_alerts_returns_empty_list(test_db_path):
     response = client.get("/alerts")
