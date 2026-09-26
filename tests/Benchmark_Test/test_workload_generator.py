@@ -1,5 +1,7 @@
 import json
+import pytest
 
+from benchmarks.run_benchmark import run_one_validated_measurement
 from benchmarks.generate_workload import REQUESTS_PER_SCENARIO, SCENARIOS, SEED, build_workload, write_workload_jsonl, calculate_file_sha256, write_workload_manifest
 
 from app.schemas import EvaluateRequest
@@ -255,3 +257,26 @@ def test_manifest_matches_generated_workload(tmp_path):
     assert len(manifest["workload_sha256"]) == 64
     assert manifest["workload_sha256"] == calculate_file_sha256(workload_path)
 
+def test_failed_measurement_does_not_save_results(tmp_path):
+    record = build_workload()[0]
+
+    invalid_record = {
+        "scenario": record["scenario"],
+        "payload": {
+            **record["payload"],
+            "confidence": "abc",
+        },
+    }
+
+    db_path = tmp_path / "invalid.db"
+    results_path = tmp_path / "invalid.jsonl"
+
+    with pytest.raises(RuntimeError, match="status=422"):
+        run_one_validated_measurement(
+            workload=[invalid_record],
+            manifest={"total_requests": 1},
+            db_path=db_path,
+            results_path=results_path,
+        )
+
+    assert not results_path.exists()
