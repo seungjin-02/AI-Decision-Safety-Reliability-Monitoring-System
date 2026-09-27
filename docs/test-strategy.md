@@ -32,7 +32,7 @@
 - human_required를 final_level에 종속시키는 변경
 - priority 필드를 다시 생성하는 변경
 - API response에 core 내부 객체를 그대로 노출하는 변경
- trace_id body/header 일치 계약을 깨뜨리는 변경
+- trace_id body/header/로그/DB 일치 계약을 깨뜨리는 변경
 
 따라서 테스트는 기능 검증뿐 아니라 설계 불변조건을 보호하는 역할을 한다.
 
@@ -40,7 +40,7 @@
 
 ## 2. Test Directory Structure
 
-테스트는 네 가지 계층으로 분리되어 있다.
+테스트는 여섯 영역으로 분리되어 있다.
 
 ```text
 tests/
@@ -48,6 +48,8 @@ tests/
   Integration_Test/
   Design_Invariant_Test/
   API_Test/
+  DB_Test/
+  Benchmark_Test/
 ```
 
 각 계층은 서로 다른 목적을 가진다.
@@ -64,6 +66,12 @@ Design_Invariant_Test
 
 API_Test
 → FastAPI endpoint, response contract, error mapping, trace_id 검증
+
+DB_Test
+→ SQLite 저장·조회와 rollback 검증
+
+Benchmark_Test
+→ 고정 workload 생성 및 manifest 검증
 ```
 
 ---
@@ -87,7 +95,6 @@ test_signal_generation.py
 test_score_aggregation.py
 test_gate_interpretation.py
 test_action_generation.py
-test_alert_output.py
 ```
 
 Unit test는 다음을 보장한다.
@@ -513,171 +520,26 @@ Core는 순수하게 decision event를 평가하고 `AlertOutput`을 생성한�
 
 ---
 
-## 8. API Tests
+## 8. API, DB, Benchmark Tests
 
-API test는 FastAPI layer의 외부 계약을 검증한다.
-
-```text
-tests/API_Test/
-```
-
-주요 테스트:
+`tests/API_Test/`는 외부 응답, 실패 분류 및 요청 로그 계약을 검증한다. 실제 파일은 다음과 같다.
 
 ```text
 test_evaluate_endpoint.py
 test_api_validation.py
 test_core_validation_error.py
-test_trace_id_response.py
-test_api_response_constraints.py
-test_health_endpoint.py
+test_system_error.py
+test_get_alerts.py
 ```
 
-API test는 단순히 status code만 확인하지 않는다.
+- `POST /evaluate`: 정상 요청은 SQLite에 저장되고 `201`을 반환한다. 응답 `alert_id`, `created_at` 및 `trace_id`를 검증한다.
+- API 형식 오류 `422`와 core 의미 검증 실패 `400`: 전용 오류 응답과 저장 미시도를 확인한다.
+- 저장 실패 `500`: rollback 성공 시 `rolled_back`, rollback 실패 시 `unknown`을 로그로 확인한다.
+- commit 후 응답 검증 실패 `500`: HTTP 오류와 DB commit을 구분한다.
+- `GET /alerts/{alert_id}`, `GET /alerts`: 단건 조회, `404`, 필터, 커서 페이지 이동과 입력 검증을 확인한다.
+- 요청 로그: 요청마다 `request_completed` 한 건과 `status_code`, `result`, `failure_stage`, `persistence_outcome`을 검증한다. 성공 경로에서 header·body·log·DB의 `trace_id` 연결을 확인한다.
 
-검증 대상:
-
-- /evaluate 정상 응답 contract
-- /health 정상 응답 contract
-- EvaluateResponse key set
-- SignalResponse key set
-- ErrorResponse key set
-- trace_id body/header consistency
-- 400 core_validation_error
-- 422 api_validation_error
-- 500 system_error boundary
-- critical override API response
-- failure signal이 risk_score에 합산되지 않는지 여부
-- API response에 내부 core 객체가 노출되지 않는지 여부
-
----
-
-### 8.1 Evaluate Endpoint Test
-
-검증 대상:
-
-```text
-POST /evaluate
-```
-
-주요 확인 사항:
-
-- 정상 요청은 200을 반환한다.
-- response body는 EvaluateResponse contract를 따른다.
-- response body trace_id와 X-Trace-Id header가 일치한다.
-- normal input은 INFO를 반환한다.
-- low confidence는 risk signal을 생성한다.
-- high latency는 risk signal을 생성한다.
-- combined risk는 CRITICAL로 연결된다.
-- missing model_version은 uncertainty signal을 생성한다.
-- critical override는 failure signal을 생성한다.
-- input normalization 결과가 response에 반영된다.
-
----
-
-### 8.2 API Validation Test
-
-검증 대상:
-
-```text
-FastAPI / Pydantic request schema validation
-```
-
-주요 확인 사항:
-
-- request body의 타입 또는 형식이 잘못되면 422 api_validation_error를 반환한다.
-- core pipeline으로 들어가기 전에 차단된다.
-- ErrorResponse contract를 따른다.
-- trace_id contract를 유지한다.
-
-예시:
-
-```text
-event_id = 1234
-confidence = "not-a-number"
-latency_ms = "slow"
-metadata = "not-an-object"
-```
-
----
-
-### 8.3 Core Validation Error Test
-
-검증 대상:
-
-```text
-core domain validation error → HTTP 400 mapping
-```
-
-주요 확인 사항:
-
-- API schema는 통과했지만 core domain rule을 위반하면 400을 반환한다.
-- error_type은 core_validation_error이다.
-- details는 빈 list이다.
-- trace_id contract를 유지한다.
-
-예시:
-
-```text
-confidence = 1.5
-latency_ms = -1
-decision_type = "pending"
-event_id = "   "
-```
-
----
-
-### 8.4 Trace ID Response Test
-
-검증 대상:
-
-```text
-trace_id consistency
-```
-
-주요 확인 사항:
-
-- 정상 응답에는 trace_id가 있다.
-- 에러 응답에도 trace_id가 있다.
-- 모든 응답 header에는 X-Trace-Id가 있다.
-- body.trace_id == response.headers["X-Trace-Id"] 이다.
-
-이 테스트는 향후 logging / observability 확장을 위한 기반이다.
-
----
-
-### 8.5 API Response Constraints Test
-
-검증 대상:
-
-```text
-external API response boundary
-```
-
-주요 확인 사항:
-
-- API response는 내부 core dataclass를 그대로 노출하지 않는다.
-- SignalResponse는 is_critical_override 필드를 사용한다.
-- is_high_risk 같은 과거 필드는 노출하지 않는다.
-- failure signal은 category="failure"로 노출된다.
-- risk_score와 uncertainty_score는 분리되어 노출된다.
-
----
-
-### 8.6 Health Endpoint Test
-
-검증 대상:
-
-```text
-GET /health
-```
-
-주요 확인 사항:
-
-- /health는 200을 반환한다.
-- response body에는 status="ok"가 있다.
-- response body에는 trace_id가 있다.
-- response header에는 X-Trace-Id가 있다.
-- body.trace_id와 X-Trace-Id header가 일치한다.
+`tests/DB_Test/`는 SQLite schema, foreign key, transaction rollback 및 repository 저장·조회를 검증한다. `tests/Benchmark_Test/`는 재현 가능한 workload와 manifest 계약을 검증한다. 측정 실행 및 결과 검증 절차는 [benchmark-contract.md](benchmark-contract.md)에 기록한다.
 
 ---
 
@@ -689,6 +551,8 @@ API error handling은 다음 mapping을 검증한다.
 |---|---:|---|
 | Request schema/type error | 422 | `api_validation_error` |
 | Core domain validation error | 400 | `core_validation_error` |
+| Alert ID not found | 404 | `alert_not_found` |
+| Persistence failure | 500 | `persistence_error` |
 | Unexpected server error | 500 | `system_error` |
 
 이 구분은 중요하다.
@@ -767,6 +631,12 @@ API test만 실행:
 python -m pytest tests/API_Test -v
 ```
 
+DB 및 benchmark workload test 실행:
+
+```bash
+python -m pytest tests/DB_Test tests/Benchmark_Test -v
+```
+
 특정 파일만 실행:
 
 ```bash
@@ -795,7 +665,6 @@ Design_Invariant_Test/test_design_invariants.py
 
 ```text
 API_Test/test_evaluate_endpoint.py
-API_Test/test_api_response_constraints.py
 ```
 
 ---
@@ -821,14 +690,15 @@ internal object exposure 여부
 
 ---
 
-### 12.3 Persistence layer 추가 시
+### 12.3 Persistence layer 변경 시
 
-예상 추가 테스트:
+변경에 따라 보강할 테스트:
 
 ```text
-tests/Repository_Test/
-tests/API_Test/
-tests/Integration_Test/
+tests/DB_Test/test_alert_repository.py
+tests/API_Test/test_system_error.py
+tests/API_Test/test_get_alerts.py
+tests/API_Test/test_evaluate_endpoint.py
 ```
 
 검증해야 할 것:
@@ -836,7 +706,7 @@ tests/Integration_Test/
 ```text
 POST /evaluate 결과 저장
 GET /alerts 목록 조회
-GET /alerts/{event_id} 단건 조회
+GET /alerts/{alert_id} 단건 조회
 alert와 signal의 1:N 관계 보존
 alert와 action의 1:N 관계 보존
 DB failure handling
@@ -867,7 +737,7 @@ core가 DB에 의존하지 않는지 여부
 
 ## 14. Summary
 
-이 프로젝트의 테스트 전략은 네 가지 목표를 가진다.
+이 프로젝트의 테스트 전략은 core, API, 저장소 및 고정 workload를 함께 검증한다.
 
 - 각 step의 기능이 올바르게 동작하는지 확인한다.
 - 전체 core pipeline이 대표 케이스에서 설계대로 연결되는지 확인한다.

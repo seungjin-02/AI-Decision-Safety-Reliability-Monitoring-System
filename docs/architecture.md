@@ -11,7 +11,7 @@
 
 ## 1. Architecture Overview
 
-현재 시스템은 크게 두 계층으로 나뉜다.
+현재 시스템은 API, 평가, 저장 계층으로 나뉜다.
 
 ```text
 FastAPI API Layer
@@ -19,19 +19,23 @@ FastAPI API Layer
 
 Core Evaluation Pipeline
 → decision event 평가와 alert 생성 담당
+
+SQLite Persistence Layer
+→ alert, signal, action을 한 transaction으로 저장하고 조회 담당
 ```
 
 전체 흐름은 다음과 같다.
 
 ```text
 Client
-  → FastAPI API Layer
-  → Request Schema Validation
   → Trace ID Middleware
+  → FastAPI Request Schema Validation
   → Evaluation Service
   → Core Evaluation Pipeline
-  → API Response Mapping
-  → JSON Response
+  → AlertRepository (SQLite commit)
+  → API Response Mapping / Response Validation
+  → JSON Response + X-Trace-ID
+  → 요청 완료 JSON 로그 1건
 ```
 
 이 구조의 핵심은 다음과 같다.
@@ -40,6 +44,7 @@ Client
 - Core layer는 risk / uncertainty / override / gate 해석을 담당한다.
 - Core layer는 FastAPI, HTTP status code, request header, DB를 모른다.
 - Service layer는 API schema와 core dataclass 사이의 adapter 역할을 한다.
+- Repository는 FastAPI와 분리되어 SQLite 저장 결과를 반환하거나 결과가 담긴 예외를 발생시킨다.
 - 최종 해석은 Gate Interpretation에서만 수행한다.
 - Action Generation은 판단을 다시 하지 않고 운영 행동으로 번역한다.
 - Alert Output은 결과를 재계산하지 않고 조립만 한다.
@@ -60,6 +65,7 @@ app/
     evaluation_service.py
   utils/
     trace.py
+    structured_logging.py
 ```
 
 주요 책임은 다음과 같다.
@@ -70,6 +76,7 @@ app/
 - API validation error와 core validation error 분리
 - core result를 API response contract로 변환
 - 예상하지 못한 exception을 system_error로 변환
+- 요청당 최종 요약 로그 1건 기록
 
 API layer가 직접 수행하지 않는 것:
 
@@ -84,7 +91,7 @@ API layer가 직접 수행하지 않는 것:
 
 ### Service Layer
 
-Service layer는 API layer와 core layer 사이의 adapter이다.
+Service layer는 API, core, repository를 연결한다.
 
 ```text
 app/services/evaluation_service.py
@@ -97,6 +104,10 @@ EvaluateRequest
 → DecisionEvent
 
 AlertOutput
+→ AlertRepository.save(alert, trace_id)
+→ EvaluationResult(alert, saved_alert)
+
+AlertOutput + SavedAlert
 → EvaluateResponse-compatible dict
 
 ValueError from core
@@ -104,6 +115,10 @@ ValueError from core
 ```
 
 이 계층은 core가 HTTP/FastAPI에 의존하지 않도록 보호한다.
+
+### Persistence Layer
+
+`app/db/alert_repository.py`는 alert, signal, action을 SQLite transaction으로 저장하고 ID 조회와 필터·커서 기반 목록 조회를 제공한다. 저장 성공은 commit 후 `SavedAlert`를 반환한다. 실패하면 rollback 성공 여부에 따라 `PersistenceError`의 `persistence_outcome`을 `rolled_back` 또는 `unknown`으로 전달한다. 연결 단계에서 실패하면 `not_attempted`를 전달한다.
 
 ---
 
@@ -130,29 +145,9 @@ core/
 
 ## 3. API Flow
 
-### Health Check
+### Alert Retrieval
 
-```http
-GET /health
-```
-
-처리 흐름:
-
-```text
-Request
-→ trace_id 생성
-→ status="ok" response 생성
-→ X-Trace-Id header 추가
-```
-
-응답 예시:
-
-```json
-{
-  "trace_id": "generated-trace-id",
-  "status": "ok"
-}
-```
+`GET /alerts/{alert_id}`는 ID로 alert를 조회하고, 없으면 `404 alert_not_found`를 반환한다. `GET /alerts`는 `limit`, `level`, `human_required`, 시각 범위, 두 필드로 구성된 커서를 받아 목록과 `next_cursor`를 반환한다. 두 endpoint 모두 core 평가를 다시 실행하지 않는다.
 
 ---
 
@@ -166,14 +161,18 @@ POST /evaluate
 
 ```text
 Request JSON
-→ EvaluateRequest schema validation
 → trace_id 생성
-→ evaluate_request(payload, trace_id)
+→ EvaluateRequest schema validation
+→ evaluate_request(payload, trace_id, repository)
 → DecisionEvent 생성
 → evaluate_event(event)
 → AlertOutput 생성
+→ repository.save() 및 commit
+→ persistence_outcome = committed
 → API response dict로 변환
-→ X-Trace-Id header 추가
+→ EvaluateResponse 검증 및 201 응답
+→ X-Trace-ID header 추가
+→ 요청 완료 JSON 로그 1건
 ```
 
 정상 응답은 `EvaluateResponse` contract를 따른다.
@@ -188,6 +187,9 @@ API layer와 core layer의 validation 책임은 분리된다.
 |---|---:|---|---|
 | API schema validation | 422 | `api_validation_error` | 요청 body 형식 또는 타입 오류 |
 | Core domain validation | 400 | `core_validation_error` | 형식은 맞지만 domain rule 위반 |
+| Alert ID 조회 실패 | 404 | `alert_not_found` | 요청한 alert가 없음 |
+| Repository 오류 | 500 | `persistence_error` | 저장 또는 조회 실패 |
+| Response validation | 500 | `system_error` | 저장 완료 후에도 응답 검증 실패 가능 |
 | Unexpected exception | 500 | `system_error` | 예상하지 못한 서버 내부 오류 |
 
 예시:
@@ -212,7 +214,7 @@ event_id = "   "
 → 400 core_validation_error
 ```
 
-모든 API response는 `trace_id`를 포함한다.
+정의된 endpoint의 정상 응답과 전용 예외 처리 응답은 `trace_id`를 포함한다.
 
 또한 response body의 `trace_id`와 response header의 `X-Trace-Id`는 동일해야 한다.
 
@@ -698,9 +700,13 @@ ActionRecommendation
   ↓
 AlertOutput
   ↓
+AlertRepository.save() / SQLite commit
+  ↓
+SavedAlert (alert_id, created_at)
+  ↓
 EvaluateResponse-compatible dict
   ↓
-JSON Response
+201 JSON Response + X-Trace-ID
 ```
 
 각 데이터 객체는 다음 단계로 필요한 정보만 전달한다.
@@ -716,6 +722,8 @@ JSON Response
 | FastAPI App | route, middleware, exception handler |
 | API Schema | request / response contract |
 | Evaluation Service | API schema와 core model 사이 변환 |
+| AlertRepository | SQLite 저장, rollback, 단건 및 목록 조회 |
+| Request Logging | 요청별 JSON 요약과 처리 시간 기록 |
 | Validation | invalid input 차단 |
 | Normalization | 입력값 정규화 |
 | Evaluation Context | missing field와 evaluation limit 기록 |
@@ -745,7 +753,7 @@ JSON Response
 - core는 API, HTTP, DB를 모른다.
 - API response는 내부 core 객체를 그대로 노출하지 않는다.
 
-이 제약은 unit, integration, design invariant, API test로 보호된다.
+이 제약은 unit, integration, design invariant, API, DB test로 보호된다.
 
 ---
 
@@ -765,28 +773,27 @@ JSON Response
 - action generation
 - alert output
 - FastAPI API layer
-- /health endpoint
 - /evaluate endpoint
+- GET /alerts 및 GET /alerts/{alert_id}
+- SQLite 저장과 transaction rollback
 - trace_id middleware
+- 요청 완료 구조화 JSON 로그
 - API response schema
 - API error handling
 - pytest 기반 unit tests
 - pytest 기반 integration tests
 - pytest 기반 design invariant tests
 - pytest 기반 API tests
+- pytest 기반 DB 및 benchmark workload tests
 ```
 
 현재 포함되지 않은 것:
 
 ```text
-- database persistence
-- alert history API
-- GET /alerts
-- GET /alerts/{event_id}
 - authentication / authorization
 - real-time dashboard
 - deployment environment
-- observability stack
+- 외부 로그 수집·모니터링 시스템
 - dynamic threshold optimization
 ```
 
