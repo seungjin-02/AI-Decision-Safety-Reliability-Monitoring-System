@@ -1,6 +1,6 @@
-# Architecture
+# 시스템 구조
 
-이 문서는 `AI Decision Risk Signal Monitoring System`의 전체 구조와 파이프라인 흐름을 설명한다.
+이 문서는 `AI-Decision-Safety-Reliability-Monitoring-System`의 전체 구조와 파이프라인 흐름을 설명한다.
 
 현재 버전은 AI 의사결정 이벤트를 입력받아 위험 신호, 불확실성, critical override, 인간 검토 필요 여부를 구조화하는 **FastAPI 기반 rule-based MVP**이다.
 
@@ -9,7 +9,7 @@
 
 ---
 
-## 1. Architecture Overview
+## 1. 전체 흐름
 
 현재 시스템은 API, 평가, 저장 계층으로 나뉜다.
 
@@ -51,9 +51,9 @@ Client
 
 ---
 
-## 2. Layered Responsibility
+## 2. 계층별 책임
 
-### API Layer
+### API 계층
 
 API layer는 외부 요청과 응답 계약을 담당한다.
 
@@ -89,7 +89,7 @@ API layer가 직접 수행하지 않는 것:
 
 ---
 
-### Service Layer
+### 서비스 계층
 
 Service layer는 API, core, repository를 연결한다.
 
@@ -116,13 +116,13 @@ ValueError from core
 
 이 계층은 core가 HTTP/FastAPI에 의존하지 않도록 보호한다.
 
-### Persistence Layer
+### 저장·조회 계층
 
 `app/db/alert_repository.py`는 alert, signal, action을 SQLite transaction으로 저장하고 ID 조회와 필터·커서 기반 목록 조회를 제공한다. 저장 성공은 commit 후 `SavedAlert`를 반환한다. 실패하면 rollback 성공 여부에 따라 `PersistenceError`의 `persistence_outcome`을 `rolled_back` 또는 `unknown`으로 전달한다. 연결 단계에서 실패하면 `not_attempted`를 전달한다.
 
 ---
 
-### Core Layer
+### 평가 계층
 
 Core layer는 단일 `DecisionEvent`를 평가하여 `AlertOutput`을 생성한다.
 
@@ -143,15 +143,15 @@ core/
 
 ---
 
-## 3. API Flow
+## 3. API 요청 흐름
 
-### Alert Retrieval
+### 저장된 alert 조회
 
-`GET /alerts/{alert_id}`는 ID로 alert를 조회하고, 없으면 `404 alert_not_found`를 반환한다. `GET /alerts`는 `limit`, `level`, `human_required`, 시각 범위, 두 필드로 구성된 커서를 받아 목록과 `next_cursor`를 반환한다. 두 endpoint 모두 core 평가를 다시 실행하지 않는다.
+`GET /alerts/{alert_id}`는 ID로 alert를 조회하고, 없으면 `404 alert_not_found`를 반환한다. `GET /alerts`는 `limit`, `level`, `human_required`, 시각 범위, 두 필드로 구성된 커서를 받아 목록과 `next_cursor`를 반환한다. 두 경로 모두 core 평가를 다시 실행하지 않는다. 저장된 alert의 `trace_id`는 생성 요청의 ID이며, 응답 헤더와 조회 로그의 `trace_id`는 현재 조회 요청의 ID다.
 
 ---
 
-### Evaluate Event
+### 이벤트 평가·저장
 
 ```http
 POST /evaluate
@@ -179,7 +179,7 @@ Request JSON
 
 ---
 
-## 4. Error Flow
+## 4. 오류 처리 흐름
 
 API layer와 core layer의 validation 책임은 분리된다.
 
@@ -216,11 +216,11 @@ event_id = "   "
 
 정의된 endpoint의 정상 응답과 전용 예외 처리 응답은 `trace_id`를 포함한다.
 
-또한 response body의 `trace_id`와 response header의 `X-Trace-Id`는 동일해야 한다.
+평가 성공과 전용 오류 응답에서는 본문의 `trace_id`와 헤더의 `X-Trace-ID`가 같다. 조회 성공 응답에서는 본문(저장 당시 요청 ID)과 헤더(현재 조회 요청 ID)가 일반적으로 다르다. 목록 응답의 최상위에는 `trace_id`가 없다. 상세 계약은 [API 요청·응답 계약](api-contract.md)을 따른다.
 
 ---
 
-## 5. Core Pipeline Entry Point
+## 5. 평가 함수의 시작점
 
 전체 core pipeline의 진입점은 `core/main.py`의 `evaluate_event()` 함수이다.
 
@@ -256,9 +256,9 @@ core/main.py
 
 ---
 
-## 6. Core Pipeline Steps
+## 6. 평가 단계
 
-### Step 01 — DecisionEvent
+### Step 01 — 입력 이벤트 (`DecisionEvent`)
 
 ```text
 core/step01_DecisionEvent.py
@@ -282,13 +282,13 @@ metadata
 
 ---
 
-### Validation
+### 입력 검증
 
 ```text
 core/event_validation.py
 ```
 
-Validation 단계는 잘못된 입력이 pipeline 내부로 들어오는 것을 막는다.
+Validation 단계는 직접 호출된 core 함수에서 잘못된 입력이 규칙 평가로 들어오는 것을 막는다. HTTP로 전달된 요청은 이 단계 전에 FastAPI/Pydantic의 형식 검증을 거친다.
 
 예를 들어 다음 값들은 invalid input으로 처리된다.
 
@@ -310,13 +310,13 @@ invalid input
 → rule evaluation으로 진행하지 않음
 ```
 
-API layer에서는 이 `ValueError`를 `CoreValidationException`으로 변환한 뒤 400 `core_validation_error`로 매핑한다.
+API 계층까지 도달한 core의 `ValueError`는 `CoreValidationException`을 거쳐 400 `core_validation_error`로 변환된다. 예를 들어 HTTP 요청의 `confidence="abc"`는 앞선 형식 검증에서 422가 되지만 `confidence=1.5`는 이 단계에서 400이 된다.
 
 이 단계의 목적은 invalid input이 risk나 uncertainty로 잘못 해석되는 것을 방지하는 것이다.
 
 ---
 
-### Step 02 — Normalization
+### Step 02 — 입력값 정리
 
 ```text
 core/step02_NormalizedEvent.py
@@ -347,7 +347,7 @@ Normalization은 값을 정리할 뿐 위험 판단을 수행하지 않는다.
 
 ---
 
-### Step 03 — Evaluation Context
+### Step 03 — 평가 제한 조건
 
 ```text
 core/step03_EvaluationContext.py
@@ -384,7 +384,7 @@ error_code = None
 
 ---
 
-### Step 04 — Rule Evaluation
+### Step 04 — 규칙 평가
 
 ```text
 core/step04_RuleEvaluation.py
@@ -430,7 +430,7 @@ Rule Evaluation은 아직 최종 score나 level을 결정하지 않는다. 각 r
 
 ---
 
-### Step 05 — Signal Generation
+### Step 05 — 신호 생성
 
 ```text
 core/step05_SignalGeneration.py
@@ -463,7 +463,7 @@ metadata
 
 ---
 
-### Step 06 — Score Aggregation
+### Step 06 — 점수 집계
 
 ```text
 core/step06_ScoreAggregation.py
@@ -499,7 +499,7 @@ has_stability_signal
 
 ---
 
-### Step 07 — Gate Interpretation
+### Step 07 — 최종 수준·인간 검토 결정
 
 ```text
 core/step07_GateInterpretation.py
@@ -565,7 +565,7 @@ has_critical_override_signal = True
 
 ---
 
-### Step 08 — Action Generation
+### Step 08 — 운영 행동 생성
 
 ```text
 core/step08_ActionGeneration.py
@@ -619,7 +619,7 @@ Action Generation은 이미 만들어진 gate 결과와 signal 원인을 운영 
 
 ---
 
-### Step 09 — Alert Output
+### Step 09 — 결과 조립
 
 ```text
 core/step09_AlertOutput.py
@@ -673,7 +673,7 @@ Alert Output은 최종 판단자가 아니라 이미 만들어진 결과를 외�
 
 ---
 
-## 7. Data Flow Summary
+## 7. 평가·저장 데이터 흐름
 
 ```text
 API Request JSON
@@ -713,7 +713,7 @@ EvaluateResponse-compatible dict
 
 ---
 
-## 8. Responsibility Separation
+## 8. 구성 요소별 책임
 
 이 프로젝트는 각 layer와 step의 책임을 명확히 분리한다.
 
@@ -738,7 +738,7 @@ EvaluateResponse-compatible dict
 
 ---
 
-## 9. Design Constraints
+## 9. 유지할 설계 제약
 
 이 architecture는 다음 제약을 따른다.
 
@@ -757,7 +757,7 @@ EvaluateResponse-compatible dict
 
 ---
 
-## 10. Current Scope
+## 10. 현재 구현 범위
 
 현재 architecture는 MVP 수준이다.
 

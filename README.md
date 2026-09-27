@@ -1,4 +1,4 @@
-# AI Decision Risk Signal Monitoring System
+# AI-Decision-Safety-Reliability-Monitoring-System
 
 AI 의사결정 과정에서 발생할 수 있는 **위험 신호(Risk Signal)**, **불확실성(Uncertainty)**, **인간 검토 필요 여부(Human Review Requirement)** 를 분리해 구조화하는 FastAPI 기반 MVP 프로젝트입니다.
 
@@ -7,7 +7,7 @@ AI 의사결정 과정에서 발생할 수 있는 **위험 신호(Risk Signal)**
 
 ---
 
-## Executive Summary
+## 프로젝트 요약
 
 기존의 단순 threshold 또는 score 기반 시스템은 위험과 불확실성을 하나의 결과로 압축하기 쉽습니다.
 
@@ -39,7 +39,7 @@ Human Required
 
 ---
 
-## Problem Statement
+## 해결하려는 문제
 
 AI 기반 의사결정 시스템이나 모니터링 시스템은 종종 내부 판단 결과를 단일 score, level, alert 형태로 압축합니다.
 
@@ -65,7 +65,7 @@ AI 기반 의사결정 시스템이나 모니터링 시스템은 종종 내부 �
 
 ---
 
-## Core Design Principles
+## 핵심 설계 원칙
 
 ### 1. AI는 판단 주체가 아니다
 
@@ -141,7 +141,7 @@ failure signal
 
 ---
 
-## System Architecture
+## 시스템 구조
 
 현재 시스템은 FastAPI API layer, core evaluation pipeline, SQLite persistence layer로 분리되어 있습니다.
 
@@ -159,7 +159,7 @@ Client
 
 `/evaluate`는 평가 결과를 SQLite에 저장한 뒤 `201`을 반환합니다. 저장 실패 시 결과가 담긴 `PersistenceError`를 HTTP 오류로 변환합니다.
 
-### API Layer
+### API 계층
 
 API layer는 HTTP 요청과 응답 계약을 담당합니다.
 
@@ -178,14 +178,14 @@ app/
 
 - HTTP endpoint 제공
 - request schema validation
-- trace_id 생성 및 response header 전파
+- 요청마다 trace_id 생성 및 응답 헤더 전파
 - API validation error와 core validation error 분리
 - core 결과를 API response contract로 변환
 - core layer가 HTTP/FastAPI에 의존하지 않도록 보호
 
 ---
 
-### Persistence Layer
+### 저장·조회 계층
 
 Persistence layer는 core evaluation 결과를 SQLite에 저장하는 역할을 담당합니다.
 
@@ -207,7 +207,7 @@ app/db/
 
 ---
 
-### Core Pipeline
+### 평가 단계
 
 Core pipeline은 단일 `DecisionEvent`를 평가하여 `AlertOutput`을 생성합니다.
 
@@ -242,9 +242,9 @@ DecisionEvent
 
 ---
 
-## API Contract
+## API 요청·응답
 
-### Evaluate Event
+### 이벤트 평가·저장
 
 ```http
 POST /evaluate
@@ -330,7 +330,7 @@ Response:
 
 ---
 
-## Error Policy
+## 오류 응답과 기록
 
 API layer와 core layer의 validation 책임은 분리되어 있습니다.
 
@@ -340,7 +340,7 @@ API layer와 core layer의 validation 책임은 분리되어 있습니다.
 | 201 | - | 평가 및 저장 완료 |
 | 400 | `core_validation_error` | JSON 형식은 맞지만 domain rule을 위반 |
 | 404 | `alert_not_found` | 요청한 alert ID가 없음 |
-| 422 | `api_validation_error` | 요청 body의 타입 또는 형식이 API schema와 불일치 |
+| 422 | `api_validation_error` | 요청 body 또는 조회 조건의 타입·형식 오류 |
 | 500 | `persistence_error` | DB 저장 또는 조회 실패 |
 | 500 | `system_error` | 예상하지 못한 서버 내부 오류 |
 
@@ -358,13 +358,15 @@ event_id = "   " → 400 core_validation_error
 metadata = "not-an-object" → 422 api_validation_error
 ```
 
-정의된 endpoint의 정상 응답과 전용 예외 처리 응답에는 `trace_id`가 포함되며, body의 `trace_id`와 header의 `X-Trace-ID`가 일치합니다. Middleware는 요청마다 `status_code`, `result`, `duration_ms`, `failure_stage`, `persistence_outcome` 등을 담은 JSON 요약 로그 1건을 기록합니다. 요청 body 전체는 기록하지 않습니다.
+`POST /evaluate` 정상 응답과 전용 오류 응답에서는 본문의 `trace_id`와 헤더의 `X-Trace-ID`가 같습니다. 조회 API는 다릅니다. `GET /alerts/{alert_id}`의 본문 `trace_id`는 alert를 **생성할 때의 요청 ID**이고, 헤더의 `X-Trace-ID`는 **현재 조회 요청 ID**입니다. `GET /alerts`는 각 항목에 생성 요청 ID를 담으며 응답 최상위에는 `trace_id`가 없습니다. 현재 조회 요청 ID는 헤더와 서버 로그로 확인합니다.
+
+Middleware는 요청마다 `status_code`, `result`, `duration_ms`, `failure_stage`, `persistence_outcome` 등을 담은 JSON 요약 로그 1건을 기록합니다. 요청 body 전체는 기록하지 않습니다.
 
 ---
 
-## Example Flow
+## 평가 흐름 예시
 
-### Input
+### 입력
 
 ```json
 {
@@ -377,7 +379,7 @@ metadata = "not-an-object" → 422 api_validation_error
 }
 ```
 
-### Interpretation
+### 해석
 
 ```text
 approve + low confidence
@@ -390,7 +392,7 @@ missing model_version
 → uncertainty signal
 ```
 
-### Output Summary
+### 결과 요약
 
 ```text
 level: WARN
@@ -412,9 +414,9 @@ recommended_actions:
 
 ---
 
-## Critical Override Example
+## 평가 무결성 신호 예시
 
-### Input
+### 입력
 
 ```json
 {
@@ -427,7 +429,7 @@ recommended_actions:
 }
 ```
 
-### Output Summary
+### 결과 요약
 
 ```text
 level: CRITICAL
@@ -451,7 +453,7 @@ recommended_actions:
 
 ---
 
-## Test Strategy
+## 테스트 전략
 
 테스트는 여섯 영역으로 구성되어 있습니다.
 
@@ -465,7 +467,7 @@ tests/
   Benchmark_Test/
 ```
 
-### Unit Tests
+### 단위 테스트
 
 각 core pipeline step의 독립적인 책임을 검증합니다.
 
@@ -479,11 +481,10 @@ tests/
 - score aggregation
 - gate interpretation
 - action generation
-- alert output
 
 ---
 
-### Integration Tests
+### 통합 테스트
 
 `DecisionEvent`가 전체 core pipeline을 거쳐 `AlertOutput`으로 변환되는 흐름을 검증합니다.
 
@@ -498,7 +499,7 @@ tests/
 
 ---
 
-### Design Invariant Tests
+### 설계 불변 조건 테스트
 
 시스템의 핵심 설계 원칙이 깨지지 않도록 보호합니다.
 
@@ -510,25 +511,28 @@ tests/
 - human_required는 final_level과 분리된다.
 - AlertOutput은 결과를 재계산하지 않고 조립만 한다.
 
+결과 조립의 실제 값 연결은 `test_design_invariants.py`의 `test_alert_output`에서도 검증합니다.
+
 ---
 
-### API Tests
+### API 테스트
 
 FastAPI 계층의 외부 계약을 검증합니다.
 
 검증 대상 예시:
 
 - `POST /evaluate`
+- `GET /alerts/{alert_id}`, `GET /alerts`
 - success response의 주요 필드
 - 400 core validation error
 - 422 API validation error
 - 500 system error response contract
 - 500 response의 빈 details list
-- 500 response의 trace_id body/header consistency
+- 평가·오류 응답의 trace_id 본문·헤더 일치와 조회 응답의 trace_id 역할 구분
 
 ---
 
-### DB Tests
+### DB 테스트
 
 SQLite schema 초기화와 AlertRepository의 transaction 동작을 검증합니다.
 
@@ -542,7 +546,7 @@ SQLite schema 초기화와 AlertRepository의 transaction 동작을 검증합니
 
 ---
 
-## Repository Structure
+## 파일 구조
 
 ```text
 app/
@@ -556,6 +560,7 @@ app/
     evaluation_service.py
   utils/
     trace.py
+    structured_logging.py
 
 core/
   main.py
@@ -622,15 +627,15 @@ docs/
 
 ---
 
-## How to Run
+## 실행 방법
 
-### Run Core Pipeline Directly
+### 평가 함수 실행
 
 ```bash
-python core/main.py
+python -m core.main
 ```
 
-### Run FastAPI Server
+### API 서버 실행
 
 ```bash
 uvicorn app.main:app --reload
@@ -656,7 +661,7 @@ curl -X POST http://127.0.0.1:8000/evaluate \
 
 ---
 
-## How to Test
+## 테스트 실행
 
 전체 테스트 실행:
 
@@ -700,15 +705,17 @@ Benchmark workload tests:
 python -m pytest tests/Benchmark_Test -v
 ```
 
-## Benchmark Baseline
+## 벤치마크 기준선
 
 고정 seed로 생성한 10개 시나리오, 1,000건 workload를 사용합니다. 별도 DB로 100건 warm-up 후, 각각 독립된 DB에서 1,000건씩 3회 순차 측정합니다. 각 실행은 응답·요청 로그·DB의 trace 연결 및 저장 건수를 확인한 다음 결과를 남깁니다. 측정 방식은 FastAPI `TestClient` 기반이며 실제 네트워크나 동시 접속 부하는 포함하지 않습니다.
+
+저장된 결과를 요약하려면 `python -m benchmarks.summarize_results`를 실행합니다. 측정을 새로 실행할 때는 `python -m benchmarks.run_benchmark`를 사용하며, 기존 `benchmarks/results/run_01`~`run_03` 파일이 있으면 덮어쓰지 않고 중단합니다.
 
 실행 기준과 측정 환경은 [Benchmark Contract](docs/benchmark-contract.md), 결과와 원인 미확정인 지연 사례는 [Benchmark Baseline](docs/benchmark-baseline.md)에 기록되어 있습니다.
 
 ---
 
-## Documentation
+## 문서 목록
 
 자세한 설계 설명은 아래 문서에서 확인할 수 있습니다.
 
@@ -722,7 +729,7 @@ python -m pytest tests/Benchmark_Test -v
 
 ---
 
-## What This System Does NOT Do
+## 의도적으로 수행하지 않는 일
 
 이 시스템은 다음을 하지 않습니다.
 
@@ -753,57 +760,29 @@ python -m pytest tests/Benchmark_Test -v
 
 ---
 
-## Current Scope
+## 현재 구현 범위
 
 현재 구현된 범위는 다음과 같습니다.
 
-```text
-Completed:
-- Core decision evaluation pipeline
-- Event validation
-- Normalization
-- Rule evaluation
-- Signal generation
-- Risk / uncertainty score separation
-- Critical override handling
-- Gate interpretation
-- Action recommendation
-- Alert output construction
-- SQLite schema and connection
-- AlertRepository persistence
-- Transaction rollback handling
-- AlertRepository 단건 조회 및 필터·커서 목록 조회
-- FastAPI API layer
-- /evaluate endpoint (201, SQLite 저장, response_model 검증)
-- GET /alerts 및 GET /alerts/{alert_id}
-- trace_id middleware
-- 요청별 구조화 JSON 로그와 persistence_outcome 기록
-- API request / response schema definitions
-- API error handling
-- Unit tests
-- Integration tests
-- Design invariant tests
-- API tests
-- DB tests
-- Benchmark workload tests 및 검증된 측정 결과
-- GitHub Actions CI
-```
+- core 평가 흐름: 입력 검증, 위험·불확실성 분리, 최종 수준과 운영 행동 결정
+- `POST /evaluate`: 평가·SQLite 저장·응답 모델 검증 후 `201` 반환
+- `GET /alerts/{alert_id}`, `GET /alerts`: 저장된 결과 조회와 필터·커서 기반 목록 조회
+- SQLite transaction rollback과 저장 결과(`not_attempted`, `committed`, `rolled_back`, `unknown`) 구분
+- 요청별 `trace_id`, 구조화 JSON 요약 로그 및 HTTP 오류 응답
+- 단위·통합·설계 불변 조건·API·DB·벤치마크 workload 테스트
+- 고정된 1,000건 workload와 3회 벤치마크 기준선, GitHub Actions CI
 
-현재 구현되지 않은 범위는 다음과 같습니다.
+현재 제공하지 않는 항목은 다음과 같습니다 (구현 일정은 정하지 않았습니다).
 
-```text
-Not Yet Implemented:
-- /health endpoint
-- Authentication / authorization
-- Dashboard
-- Deployment pipeline
-- Dependency lock file
+- 사용자 인증과 권한 관리
+- 운영자 대시보드
+- 배포 자동화
+- 별도의 의존성 잠금 파일 (`requirements.txt`에는 버전이 명시되어 있음)
 - 외부 로그 수집·모니터링 시스템
-```
 
 ---
 
-## Summary
+## 마무리
 
 이 프로젝트는 AI를 활용해 결정을 자동화하는 시스템이 아닙니다.
 

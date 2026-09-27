@@ -1,10 +1,10 @@
-# API Contract
+# API 요청·응답 계약
 
-이 문서는 `AI Decision Risk Signal Monitoring System`의 FastAPI API 계약을 정의한다.
+이 문서는 `AI-Decision-Safety-Reliability-Monitoring-System`의 FastAPI API 계약을 정의한다.
 
-API layer는 외부 요청과 응답 형식을 고정하고 core evaluation pipeline을 HTTP 환경에서 안전하게 호출하는 역할을 한다.
+API 계층은 요청을 검증하고, 평가 결과의 저장·조회와 HTTP 응답을 연결한다. 위험 수준과 인간 검토 여부는 core 평가 함수가 결정한다.
 
-현재 API는 다음 endpoint를 제공한다.
+현재 제공하는 경로는 다음과 같다.
 
 ```text
 POST /evaluate
@@ -14,36 +14,30 @@ GET  /alerts
 
 ---
 
-## 1. API Design Goals
+## 1. API의 역할
 
-이 API의 목표는 단순히 core pipeline을 외부에서 호출하는 것이 아니다.
+API가 수행하는 일:
 
-핵심 목표는 다음과 같다.
+- JSON 요청의 형식과 타입을 검증하고, core 입력 검증 오류와 구분한다.
+- 평가 결과를 저장한 뒤 응답 모델에 맞는 JSON을 반환한다.
+- 저장된 alert를 조회하고, 현재 요청을 헤더와 서버 로그의 `trace_id`로 추적한다.
+- core 내부 객체를 그대로 응답에 노출하지 않고 평가 결과를 구조화한다.
 
-- 외부 JSON request를 명확한 schema로 검증한다.
-- API validation error와 core validation error를 분리한다.
-- 정의된 정상·오류 응답에 trace_id를 포함한다.
-- response body의 trace_id와 X-Trace-ID header를 일치시킨다.
-- core 내부 객체를 API response에 그대로 노출하지 않는다.
-- risk, uncertainty, critical override, human_required를 구조화된 응답으로 제공한다.
-
-API layer는 판단을 수행하지 않는다. 판단은 core evaluation pipeline에서 수행된다.
+위험 신호의 해석과 최종 수준 결정은 core 평가 단계에서 수행한다.
 
 ---
 
-## 2. API Layer Responsibilities
+## 2. API 계층의 책임
 
-API layer의 책임은 다음과 같다.
+API 계층의 책임은 다음과 같다.
 
-- HTTP endpoint 제공
-- request body schema validation
-- response schema contract 제공
-- trace_id 생성 및 전파
-- exception handling
-- status code mapping
-- core result를 external API response로 변환
+- HTTP 경로와 요청·응답 모델 제공
+- 요청 형식 검증 및 응답 모델 검증
+- 요청별 `trace_id` 생성 및 `X-Trace-ID` 헤더 설정
+- 예외를 안전한 HTTP 오류 응답으로 변환
+- core 평가 결과와 저장 정보를 API 응답으로 변환
 
-API layer가 직접 수행하지 않는 것:
+core 평가 함수가 담당하는 일:
 
 - risk rule 판단
 - uncertainty 계산
@@ -54,52 +48,62 @@ API layer가 직접 수행하지 않는 것:
 
 ---
 
-## 3. Trace ID Contract
+## 3. 요청 ID(`trace_id`) 계약
 
-정의된 endpoint의 정상 응답과 전용 예외 처리 응답은 `trace_id`를 포함한다.
+미들웨어는 요청마다 새 ID를 만들고 `X-Trace-ID` 응답 헤더와 해당 요청의 `request_completed` 로그에 기록한다. 저장된 alert에는 **생성 당시 평가 요청**의 ID를 보존한다.
 
-Middleware가 처리한 응답의 header에는 `X-Trace-ID`가 포함된다.
+| 응답 | 본문 `trace_id` | 헤더 `X-Trace-ID` | 두 값의 관계 |
+|---|---|---|---|
+| `POST /evaluate` 201 | 현재 평가 요청 ID | 현재 평가 요청 ID | 같음 (DB alert에도 저장) |
+| 정의된 오류 응답 | 현재 실패 요청 ID | 현재 실패 요청 ID | 같음 |
+| `GET /alerts/{alert_id}` 200 | alert 생성 당시 요청 ID | 현재 조회 요청 ID | 일반적으로 다름 |
+| `GET /alerts` 200 | 최상위 필드 없음; 각 `alerts[]`에 생성 요청 ID | 현재 조회 요청 ID | 비교 대상이 다름 |
 
-```text
-response.body.trace_id == response.headers["X-Trace-ID"]
+예를 들어 생성 요청의 ID가 `trace-create`이고 나중에 조회한 요청의 ID가 `trace-read`라면, 조회 본문은 `trace-create`, 헤더와 조회 로그는 `trace-read`를 담는다.
+
+---
+
+## 4. 저장된 alert 조회
+
+### `GET /alerts/{alert_id}`: 한 건 조회
+
+저장된 alert의 정수 `alert_id`로 조회한다. 찾으면 `200`과 `AlertDetailResponse`를 반환한다. 없으면 `404 alert_not_found`를 반환한다. 조회 응답의 본문 `trace_id`는 생성 요청 ID이므로 조회 요청의 헤더와 같을 필요가 없다.
+
+### `GET /alerts`: 목록 조회
+
+| 조회 조건 | 의미 |
+|---|---|
+| `limit` | 한 페이지 건수, 기본 5, 허용 범위 1~100 |
+| `level`, `human_required` | 위험 수준과 인간 검토 필요 여부로 필터 |
+| `created_from`, `created_to` | 시간대가 포함된 생성 시각 범위 (`created_from < created_to`) |
+| `cursor_created_at`, `cursor_alert_id` | 다음 페이지 요청 시 두 값을 함께 제공 |
+
+`200` 목록 응답의 최상위 필드는 `count`, `limit`, `alerts`, `next_cursor`다. `alerts`의 각 항목은 `alert_id`, 생성 요청의 `trace_id`, `created_at`, 평가 결과를 포함한다. 다음 페이지가 있으면 `next_cursor`의 `created_at`, `alert_id`를 다음 요청의 두 `cursor_` 조건에 넣는다. 마지막 페이지의 `next_cursor`는 `null`이다. 잘못된 조건에는 `422 api_validation_error`를 반환한다.
+
+빈 목록의 응답 예시 (`X-Trace-ID` 헤더는 별도로 전송):
+
+```json
+{"count": 0, "limit": 5, "alerts": [], "next_cursor": null}
 ```
 
-이 계약은 정상 응답과 에러 응답 모두에 적용된다.
+---
 
-목적:
+## 5. `POST /evaluate`: 평가 후 저장
 
-- 요청 단위 추적성 확보
-- API test에서 response contract 검증 가능
-- 요청 요약 로그 및 SQLite 저장 결과와의 연결
+### 역할
+
+`POST /evaluate`는 하나의 의사결정 이벤트를 평가하고 SQLite에 저장한 뒤, `201`과 생성된 alert를 반환한다. 저장 실패 시 `500 persistence_error`를 반환한다.
 
 ---
 
-## 4. Alert Retrieval
-
-`GET /alerts/{alert_id}`는 저장된 alert를 ID로 조회하고 `200`과 `AlertDetailResponse`를 반환한다. 해당 ID가 없으면 `404 alert_not_found`를 반환한다. `alert_id`는 정수다.
-
-`GET /alerts`는 저장된 alert의 목록을 `200`과 `AlertListResponse`로 반환한다. `limit` 기본값은 5, 허용 범위는 1~100이다. `level` (`INFO`, `WARN`, `CRITICAL`), `human_required`, timezone이 명시된 `created_from`, `created_to`로 필터링할 수 있다. 날짜 범위는 `created_from < created_to`여야 한다.
-
-목록 응답은 `count`, `limit`, `alerts`, `next_cursor`를 포함한다. 다음 페이지가 있으면 `next_cursor.created_at`과 `next_cursor.alert_id`를 각각 `cursor_created_at`, `cursor_alert_id`로 **함께** 전달한다. 잘못된 필터나 커서에는 `422 api_validation_error`를 반환한다. 상세·목록 응답의 각 alert에는 `alert_id`, `trace_id`, `created_at`과 평가 결과가 들어 있다.
-
----
-
-## 5. POST /evaluate
-
-### Purpose
-
-`POST /evaluate`는 하나의 AI decision event를 평가하고 위험 신호와 불확실성, 인간 검토 필요 여부를 구조화된 alert response로 반환한다.
-
----
-
-### Request
+### 요청
 
 ```http
 POST /evaluate
 Content-Type: application/json
 ```
 
-Request body는 `EvaluateRequest` schema를 따른다.
+요청 본문은 `EvaluateRequest` schema를 따른다.
 
 ```json
 {
@@ -117,17 +121,17 @@ Request body는 `EvaluateRequest` schema를 따른다.
 
 ---
 
-## 6. EvaluateRequest Schema
+## 6. 평가 요청 필드 (`EvaluateRequest`)
 
-| Field | Type | Required | Description |
+| 필드 | 타입 | 필수 | 의미 |
 |---|---|---:|---|
-| `event_id` | `str` | Yes | 이벤트 식별자 |
-| `decision_type` | `str \| null` | No | AI 또는 시스템의 판단 유형 |
-| `confidence` | `float \| null` | No | 판단 confidence score |
-| `latency_ms` | `int \| null` | No | 응답 지연 시간 |
-| `model_version` | `str \| null` | No | 모델 버전 |
-| `error_code` | `str \| null` | No | 시스템 오류 코드 |
-| `metadata` | `object` | No | 추가 메타데이터 |
+| `event_id` | `str` | 필수 | 이벤트 식별자 |
+| `decision_type` | `str \| null` | 선택 | AI 또는 시스템의 판단 유형 |
+| `confidence` | `float \| null` | 선택 | 판단 신뢰도 |
+| `latency_ms` | `int \| null` | 선택 | 입력 이벤트가 보고한 지연 시간; API 처리 시간과 다름 |
+| `model_version` | `str \| null` | 선택 | 모델 버전 |
+| `error_code` | `str \| null` | 선택 | 입력 이벤트가 보고한 오류 코드 |
+| `metadata` | `object` | 선택 | 추가 메타데이터 |
 
 현재 `metadata`의 기본값은 빈 object이다.
 
@@ -139,15 +143,15 @@ Request body는 `EvaluateRequest` schema를 따른다.
 
 ---
 
-## 7. EvaluateResponse Schema
+## 7. 평가 응답 필드 (`EvaluateResponse`)
 
 정상 평가 응답은 `EvaluateResponse` schema를 따른다.
 
-| Field | Type | Description |
+| 필드 | 타입 | 의미 |
 |---|---|---|
 | `alert_id` | `int` | 저장된 alert ID |
 | `created_at` | `datetime` | 저장 시각 (UTC) |
-| `trace_id` | `str` | 요청 추적 ID |
+| `trace_id` | `str` | alert를 생성한 평가 요청 ID |
 | `event_id` | `str` | 평가된 이벤트 ID |
 | `level` | `str` | 최종 해석 level |
 | `risk_score` | `int` | risk category signal의 score 합 |
@@ -160,11 +164,11 @@ Request body는 `EvaluateRequest` schema를 따른다.
 
 ---
 
-## 8. SignalResponse Schema
+## 8. 위험 신호 필드 (`SignalResponse`)
 
 각 signal은 발동된 rule을 외부 응답 형식으로 구조화한 것이다.
 
-| Field | Type | Description |
+| 필드 | 타입 | 의미 |
 |---|---|---|
 | `rule_id` | `str` | 발동된 rule ID |
 | `category` | `str` | signal category |
@@ -193,9 +197,9 @@ Request body는 `EvaluateRequest` schema를 따른다.
 
 ---
 
-## 9. Normal Success Example
+## 9. 정상 평가 예시
 
-### Request
+### 요청
 
 ```json
 {
@@ -213,15 +217,15 @@ Request body는 `EvaluateRequest` schema를 따른다.
 
 ---
 
-### Response
+### 응답
 
-Status Code:
+상태 코드:
 
 ```text
 201 Created
 ```
 
-Response body:
+응답 본문:
 
 ```json
 {
@@ -283,9 +287,9 @@ Response body:
 
 ---
 
-## 10. Critical Override Example
+## 10. 평가 무결성 신호 예시
 
-### Request
+### 요청
 
 ```json
 {
@@ -301,7 +305,7 @@ Response body:
 
 ---
 
-### Response Summary
+### 응답 요약
 
 ```text
 level: CRITICAL
@@ -310,7 +314,7 @@ uncertainty_score: 0
 human_required: true
 ```
 
-Expected signal:
+예상 신호:
 
 ```json
 {
@@ -330,7 +334,7 @@ Expected signal:
 }
 ```
 
-Expected actions:
+예상 행동:
 
 ```text
 human_review_required
@@ -338,35 +342,39 @@ immediate_investigation
 escalate_incident
 ```
 
+이 예시의 `gateway_failure`는 **입력 이벤트가 보고한 평가 무결성 신호**다. API나 SQLite 자체의 장애를 뜻하지 않는다. 저장에 성공하면 이 요청도 `201`을 반환한다.
+
 ---
 
-## 11. ErrorResponse Schema
+## 11. 오류 응답 필드 (`ErrorResponse`)
 
 에러 응답은 `ErrorResponse` schema를 따른다.
 
-| Field | Type | Description |
+| 필드 | 타입 | 의미 |
 |---|---|---|
 | `trace_id` | `str` | 요청 추적 ID |
 | `error_type` | `str` | 에러 분류 |
 | `message` | `str` | 에러 메시지 |
-| `details` | `list[object]` | 상세 에러 정보 |
+| `details` | `list[object]` | 상세 에러 정보; 422는 필드별 검증 오류, 서버 오류는 빈 배열 |
 
-예시:
+필수 `event_id`가 빠졌을 때의 축약 예시 (실제 검증 오류에는 입력값 등 다른 필드가 추가될 수 있다):
 
 ```json
 {
   "trace_id": "generated-trace-id",
   "error_type": "api_validation_error",
   "message": "Request format or type is invalid.",
-  "details": []
+  "details": [
+    {"loc": ["body", "event_id"], "msg": "Field required", "type": "missing"}
+  ]
 }
 ```
 
 ---
 
-## 12. Status Code Policy
+## 12. HTTP 상태 코드
 
-| Status Code | Error Type | Meaning |
+| 상태 코드 | 오류 유형 | 의미 |
 |---:|---|---|
 | 201 | - | 평가 결과 저장 후 정상 응답 (`POST /evaluate`) |
 | 200 | - | alert 단건·목록 조회 |
@@ -378,9 +386,26 @@ escalate_incident
 
 ---
 
-## 13. 400 Core Validation Error
+### 404 응답 예시
 
-### Meaning
+alert ID를 찾지 못한 경우의 응답 본문:
+
+```json
+{
+  "trace_id": "current-read-trace-id",
+  "error_type": "alert_not_found",
+  "message": "Alert not found",
+  "details": [{"alert_id": 999}]
+}
+```
+
+이 오류의 본문 `trace_id`는 현재 조회 요청의 헤더와 같다.
+
+---
+
+## 13. 400: 평가 규칙에 맞지 않는 입력
+
+### 의미
 
 400은 request body가 API schema는 통과했지만 core domain validation에서 거부된 경우이다.
 
@@ -388,7 +413,7 @@ escalate_incident
 
 ---
 
-### Examples
+### 예시
 
 ```text
 confidence = 1.5
@@ -399,15 +424,15 @@ event_id = "   "
 
 ---
 
-### Response
+### 응답
 
-Status Code:
+상태 코드:
 
 ```text
 400 Bad Request
 ```
 
-Response body:
+응답 본문:
 
 ```json
 {
@@ -420,36 +445,38 @@ Response body:
 
 ---
 
-## 14. 422 API Validation Error
+## 14. 422: 요청 형식 오류
 
-### Meaning
+### 의미
 
-422는 request body가 API schema 자체를 통과하지 못한 경우이다.
+422는 요청 본문 또는 조회 조건이 API 스키마 검증을 통과하지 못한 경우이다.
 
-즉 core pipeline으로 들어가기 전에 FastAPI/Pydantic layer에서 차단된다.
+`POST /evaluate`의 입력 형식 오류는 core 평가 전에 차단된다. 조회 조건 오류는 DB 조회 전에 차단된다.
 
 ---
 
-### Examples
+### 예시
 
 ```text
 event_id = 1234
 confidence = "not-a-number"
 latency_ms = "slow"
 metadata = "not-an-object"
+limit = 0 (GET /alerts)
+cursor_created_at만 전달 (GET /alerts)
 ```
 
 ---
 
-### Response
+### 응답
 
-Status Code:
+상태 코드:
 
 ```text
 422 Unprocessable Entity
 ```
 
-Response body:
+응답 본문:
 
 ```json
 {
@@ -468,27 +495,35 @@ Response body:
 
 ---
 
-## 15. 500 System Error
+## 15. 500: 저장 또는 서버 내부 오류
 
-### Meaning
+### 의미
 
 500은 저장 실패(`persistence_error`) 또는 서버 내부 오류(`system_error`)가 발생한 경우이다. 응답 모델 검증이 저장 완료 후 실패하면 HTTP 결과는 500이어도 DB에는 저장된 상태일 수 있다.
 
-서버 요청 로그의 `failure_stage`는 실패 위치를 나타낸다 (`api_validation`, `core_evaluation`, `resource_lookup`, `persistence`, `response_validation` 또는 `unknown`). `persistence_outcome`은 `not_attempted`, `committed`, `rolled_back`, `unknown` 중 하나다. 이 필드는 클라이언트 오류 응답에 포함되지 않는다. Middleware는 최종 `status_code`로부터 `result`를 계산하고 요청당 `request_completed` JSON 로그를 한 번 남긴다.
+| 500 원인 | 클라이언트 `error_type` | 서버 로그 `failure_stage` | 쓰기 결과 예시 |
+|---|---|---|---|
+| 저장 실패·rollback 성공 | `persistence_error` | `persistence` | `rolled_back` |
+| rollback 결과 확인 실패 | `persistence_error` | `persistence` | `unknown` |
+| commit 후 응답 검증 실패 | `system_error` | `response_validation` | `committed` |
+
+저장 오류의 클라이언트 메시지는 `Database operation failed`이며, 오류 본문에는 DB 예외의 세부 내용이나 쓰기 결과를 넣지 않는다.
+
+서버 요청 로그의 `failure_stage`는 실패 위치를 나타낸다 (`api_validation`, `core_evaluation`, `resource_lookup`, `persistence`, `response_validation` 또는 `unknown`). `persistence_outcome`은 **현재 요청의 쓰기 결과**를 나타내며 `not_attempted`, `committed`, `rolled_back`, `unknown` 중 하나다. 조회 요청의 응답이 성공해도 쓰기를 시도하지 않았으므로 `not_attempted`로 기록한다. 이 필드들은 클라이언트 오류 응답에 포함되지 않는다. 미들웨어는 최종 `status_code`로부터 `result`를 계산하고 요청당 `request_completed` JSON 로그를 한 번 남긴다.
 
 이 에러는 정상적인 validation 실패가 아니다.
 
 ---
 
-### Response
+### 응답
 
-Status Code:
+상태 코드:
 
 ```text
 500 Internal Server Error
 ```
 
-Response body:
+응답 본문:
 
 ```json
 {
@@ -501,7 +536,7 @@ Response body:
 
 ---
 
-## 16. API Validation vs Core Validation
+## 16. 422와 400의 구분
 
 이 시스템은 validation을 두 계층으로 나눈다.
 
@@ -515,7 +550,7 @@ Core validation
 
 구분 기준:
 
-| Input | Layer | Status Code |
+| 입력 | 검증 단계 | 상태 코드 |
 |---|---|---:|
 | `confidence = "not-a-number"` | API validation | 422 |
 | `confidence = 1.5` | Core validation | 400 |
@@ -537,13 +572,13 @@ Core validation
 
 ---
 
-## 17. Response Invariants
+## 17. 응답에서 유지할 규칙
 
-API response는 다음 invariant를 지켜야 한다.
+정의된 응답에서 유지할 규칙은 다음과 같다.
 
-- 정의된 정상·오류 응답은 trace_id를 포함한다.
-- Middleware가 처리한 응답 header에는 X-Trace-ID가 포함된다.
-- 정의된 응답의 response.body.trace_id == response.headers["X-Trace-ID"].
+- 현재 요청의 `trace_id`는 응답 헤더와 요청 완료 로그에 포함된다.
+- 평가 성공·전용 오류 응답의 본문 `trace_id`는 헤더와 같다.
+- 조회 성공 응답은 저장된 alert의 생성 요청 ID를 보존하며, 목록 응답의 최상위에 `trace_id`를 추가하지 않는다.
 - 정상 평가 응답은 EvaluateResponse schema를 따르고, 조회 응답은 AlertDetailResponse 또는 AlertListResponse를 따른다.
 - 에러 응답은 ErrorResponse schema를 따른다.
 - SignalResponse는 is_critical_override 필드를 사용한다.
@@ -553,7 +588,7 @@ API response는 다음 invariant를 지켜야 한다.
 
 ---
 
-## 18. Current Limitations
+## 18. 현재 제공하지 않는 기능
 
 현재 API는 MVP 범위이다.
 
