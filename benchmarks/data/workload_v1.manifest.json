@@ -1,0 +1,24 @@
+{
+  "dataset_version": "v1",
+  "expected_level_distribution": {
+    "CRITICAL": 200,
+    "INFO": 500,
+    "WARN": 300
+  },
+  "scenario_counts": {
+    "approve_low_confidence": 100,
+    "high_latency": 100,
+    "high_risk": 100,
+    "high_risk_with_uncertainty": 100,
+    "integrity_override": 100,
+    "missing_confidence": 100,
+    "missing_model_version": 100,
+    "normal_approve": 100,
+    "normal_reject": 100,
+    "reject_low_confidence": 100
+  },
+  "seed": 20260921,
+  "total_requests": 1000,
+  "workload_file": "workload_v1.jsonl",
+  "workload_sha256": "2784ca458bf576e87fac803d2d8eccb0b08aff30853a6276bf6957dd03a8c3f2"
+}
