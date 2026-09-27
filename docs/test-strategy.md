@@ -1,6 +1,6 @@
-# Test Strategy
+# 테스트 전략
 
-이 문서는 `AI Decision Risk Signal Monitoring System`의 테스트 구조와 테스트가 보호하는 설계 원칙을 설명한다.
+이 문서는 `AI-Decision-Safety-Reliability-Monitoring-System`의 테스트 구조와 테스트가 보호하는 설계 원칙을 설명한다.
 
 현재 버전은 AI 의사결정 이벤트를 구조화하여 위험 신호, 불확실성, critical override, 인간 검토 필요 여부를 검증하는 **FastAPI 기반 rule-based MVP**이다.
 
@@ -9,7 +9,7 @@
 
 ---
 
-## 1. Purpose
+## 1. 테스트 목표
 
 이 프로젝트의 테스트 목적은 다음과 같다.
 
@@ -19,7 +19,7 @@
 - risk와 uncertainty가 섞이지 않도록 보호한다.
 - system failure가 risk_score로 위장되지 않도록 보호한다.
 - critical override가 별도 failure path로 유지되는지 확인한다.
-- trace_id가 모든 API response에서 일관되게 전달되는지 확인한다.
+- 평가·오류 응답의 본문과 헤더 ID 일치, 조회 응답의 생성 ID와 조회 ID 구분을 확인한다.
 - core 내부 객체가 API response에 그대로 노출되지 않도록 보호한다.
 
 특히 이 프로젝트에서는 작은 코드 변경이 설계 철학을 쉽게 깨뜨릴 수 있다.
@@ -32,15 +32,15 @@
 - human_required를 final_level에 종속시키는 변경
 - priority 필드를 다시 생성하는 변경
 - API response에 core 내부 객체를 그대로 노출하는 변경
- trace_id body/header 일치 계약을 깨뜨리는 변경
+- 평가·오류 요청의 본문·헤더·로그·DB 연결을 깨뜨리거나 조회 요청 ID와 생성 요청 ID를 혼동하는 변경
 
 따라서 테스트는 기능 검증뿐 아니라 설계 불변조건을 보호하는 역할을 한다.
 
 ---
 
-## 2. Test Directory Structure
+## 2. 테스트 디렉터리
 
-테스트는 네 가지 계층으로 분리되어 있다.
+테스트는 여섯 영역으로 분리되어 있다.
 
 ```text
 tests/
@@ -48,6 +48,8 @@ tests/
   Integration_Test/
   Design_Invariant_Test/
   API_Test/
+  DB_Test/
+  Benchmark_Test/
 ```
 
 각 계층은 서로 다른 목적을 가진다.
@@ -64,13 +66,19 @@ Design_Invariant_Test
 
 API_Test
 → FastAPI endpoint, response contract, error mapping, trace_id 검증
+
+DB_Test
+→ SQLite 저장·조회와 rollback 검증
+
+Benchmark_Test
+→ 고정 workload 생성 및 manifest 검증
 ```
 
 ---
 
-## 3. Unit Tests
+## 3. 단위 테스트
 
-Unit test는 각 core pipeline step이 독립적으로 자신의 책임을 수행하는지 검증한다.
+Unit test는 개별 평가 단계의 독립적인 책임을 검증한다. 최종 `AlertOutput` 조립은 별도의 단위 테스트 파일이 아니라 `tests/Design_Invariant_Test/test_design_invariants.py`의 `test_alert_output`에서 연결된 값을 확인한다.
 
 ```text
 tests/Unit_Test/
@@ -87,7 +95,6 @@ test_signal_generation.py
 test_score_aggregation.py
 test_gate_interpretation.py
 test_action_generation.py
-test_alert_output.py
 ```
 
 Unit test는 다음을 보장한다.
@@ -98,9 +105,9 @@ Unit test는 다음을 보장한다.
 
 ---
 
-## 4. Unit Test Responsibilities
+## 4. 평가 단계별 단위 테스트
 
-### 4.1 Validation Test
+### 4.1 입력 검증
 
 검증 대상:
 
@@ -128,7 +135,7 @@ Validation test는 잘못된 입력이 rule evaluation으로 넘어가지 않도
 
 ---
 
-### 4.2 Normalization Test
+### 4.2 입력값 정리
 
 검증 대상:
 
@@ -151,7 +158,7 @@ Normalization test는 입력 정리와 판단 로직이 섞이지 않도록 보�
 
 ---
 
-### 4.3 Evaluation Context Test
+### 4.3 평가 제한 조건
 
 검증 대상:
 
@@ -173,7 +180,7 @@ Evaluation Context test는 rule evaluation 전에 판단 제한 조건이 올바
 
 ---
 
-### 4.4 Rule Evaluation Test
+### 4.4 규칙 평가
 
 검증 대상:
 
@@ -196,7 +203,7 @@ Rule Evaluation test는 개별 rule의 발동 조건을 검증한다.
 
 ---
 
-### 4.5 Signal Generation Test
+### 4.5 신호 생성
 
 검증 대상:
 
@@ -216,7 +223,7 @@ Signal Generation test는 rule 평가 결과가 이후 pipeline에서 사용할 
 
 ---
 
-### 4.6 Score Aggregation Test
+### 4.6 점수 집계
 
 검증 대상:
 
@@ -237,7 +244,7 @@ Score Aggregation test는 risk, uncertainty, failure path가 섞이지 않도록
 
 ---
 
-### 4.7 Gate Interpretation Test
+### 4.7 최종 해석
 
 검증 대상:
 
@@ -258,7 +265,7 @@ Gate Interpretation test는 최종 해석이 명시된 boundary logic을 따르�
 
 ---
 
-### 4.8 Action Generation Test
+### 4.8 운영 행동 생성
 
 검증 대상:
 
@@ -273,14 +280,13 @@ core/step08_ActionGeneration.py
 - uncertainty signal이 있으면 review_missing_or_incomplete_information action이 생성된다.
 - CRITICAL은 escalate_incident action으로 연결된다.
 - WARN은 monitor_closely action으로 연결된다.
-- NFO는 no_immediate_action_required action으로 연결된다.
-- priority는 생성하지 않는다.
+- INFO는 no_immediate_action_required action으로 연결된다.
 
 Action Generation test는 action이 판단 추천이 아니라 운영 행동 번역으로 유지되는지 확인한다.
 
 ---
 
-### 4.9 Alert Output Test
+### 4.9 결과 조립 검증 (설계 불변 조건 테스트)
 
 검증 대상:
 
@@ -288,22 +294,11 @@ Action Generation test는 action이 판단 추천이 아니라 운영 행동 번
 core/step09_AlertOutput.py
 ```
 
-주요 확인 사항:
-
-- AlertOutput은 이미 계산된 결과를 조립한다.
-- risk_score를 재계산하지 않는다.
-- uncertainty_score를 재계산하지 않는다.
-- final_level을 재판단하지 않는다.
-- recommended_actions를 새로 생성하지 않는다.
-- reason_summary는 action.message에서 가져온다.
-- metadata는 복사되어 보존된다.
-- priority 필드는 존재하지 않는다.
-
-Alert Output test는 최종 출력 레이어가 판단을 다시 수행하지 않도록 보호한다.
+현재 `test_alert_output`은 정규화된 `event_id`, 집계된 두 점수, 결정된 `level`·`human_required`, 생성된 `recommended_actions`가 최종 alert에 그대로 연결되는지를 비교한다. `reason_summary`와 `metadata`도 출력 객체의 필드지만 이 테스트에서 별도로 단언하지는 않는다.
 
 ---
 
-## 5. Integration Tests
+## 5. 통합 테스트
 
 Integration test는 여러 core step이 연결된 전체 pipeline 흐름을 검증한다.
 
@@ -320,7 +315,7 @@ test_full_pipeline.py
 
 ---
 
-### 5.1 Pipeline Validation Test
+### 5.1 입력 검증 중단
 
 `test_pipeline_validation.py`는 validation이 pipeline 입구에서 정상적으로 작동하는지 확인한다.
 
@@ -344,7 +339,7 @@ confidence = 1.5
 
 ---
 
-### 5.2 Full Pipeline Test
+### 5.2 평가 흐름 전체
 
 `test_full_pipeline.py`는 `DecisionEvent`가 전체 pipeline을 거쳐 최종 `AlertOutput`으로 변환되는 흐름을 검증한다.
 
@@ -384,7 +379,7 @@ Full Pipeline Test는 각 step이 개별적으로 맞는 것뿐 아니라 조립
 
 ---
 
-## 6. Design Invariant Tests
+## 6. 설계 불변 조건 테스트
 
 Invariant test는 시스템의 핵심 설계 원칙이 깨지지 않도록 보호한다.
 
@@ -404,9 +399,9 @@ Invariant test는 기능 테스트보다 더 강한 의미를 가진다.
 
 ---
 
-## 7. Protected Design Invariants
+## 7. 보호하는 설계 불변 조건
 
-### 7.1 Uncertainty must not increase risk_score directly
+### 7.1 불확실성을 위험 점수에 더하지 않음
 
 ```text
 uncertainty signal
@@ -418,7 +413,7 @@ uncertainty signal
 
 ---
 
-### 7.2 Failure signal must not increase risk_score
+### 7.2 시스템 실패를 위험 점수에 더하지 않음
 
 ```text
 failure signal
@@ -430,7 +425,7 @@ system failure 또는 evaluation integrity failure는 일반 위험 점수가 �
 
 ---
 
-### 7.3 Critical override must work as override flag
+### 7.3 평가 무결성 신호는 별도 조건으로 유지
 
 ```text
 critical override signal
@@ -441,7 +436,7 @@ critical override signal
 
 ---
 
-### 7.4 human_required must remain separate from final_level
+### 7.4 최종 수준과 인간 검토 여부를 분리
 
 ```text
 level = WARN
@@ -454,7 +449,7 @@ human_required = True
 
 ---
 
-### 7.5 ActionGeneration must not reinterpret risk
+### 7.5 운영 행동 생성 단계에서 위험을 재해석하지 않음
 
 Action Generation은 다음을 수행하지 않는다.
 
@@ -469,7 +464,7 @@ Action Generation은 이미 만들어진 `GateDecision`과 `Signal` 원인을 �
 
 ---
 
-### 7.6 Priority must not be generated
+### 7.6 사건 간 우선순위를 생성하지 않음
 
 이 시스템은 사건 간 우선순위를 생성하지 않는다.
 
@@ -480,9 +475,11 @@ priority
 
 이 판단은 시스템이 아니라 인간 검토자 또는 운영자의 책임으로 남긴다.
 
+현재 테스트에는 `priority` 필드 부재만 따로 검사하는 단언은 없다. 신규 응답 필드나 출력 모델을 변경할 때 이 경계를 별도로 확인해야 한다.
+
 ---
 
-### 7.7 AlertOutput must not recalculate decisions
+### 7.7 최종 결과에서 판단을 재계산하지 않음
 
 Alert Output은 다음을 수행하지 않는다.
 
@@ -497,7 +494,7 @@ action 재생성
 
 ---
 
-### 7.8 Core must not depend on API concerns
+### 7.8 Core는 HTTP·DB에 의존하지 않음
 
 Core layer는 다음을 몰라야 한다.
 
@@ -513,175 +510,30 @@ Core는 순수하게 decision event를 평가하고 `AlertOutput`을 생성한�
 
 ---
 
-## 8. API Tests
+## 8. API·DB·벤치마크 테스트
 
-API test는 FastAPI layer의 외부 계약을 검증한다.
-
-```text
-tests/API_Test/
-```
-
-주요 테스트:
+`tests/API_Test/`는 외부 응답, 실패 분류 및 요청 로그 계약을 검증한다. 실제 파일은 다음과 같다.
 
 ```text
 test_evaluate_endpoint.py
 test_api_validation.py
 test_core_validation_error.py
-test_trace_id_response.py
-test_api_response_constraints.py
-test_health_endpoint.py
+test_system_error.py
+test_get_alerts.py
 ```
 
-API test는 단순히 status code만 확인하지 않는다.
+- `POST /evaluate`: 정상 요청은 SQLite에 저장되고 `201`을 반환한다. 응답 `alert_id`, `created_at` 및 `trace_id`를 검증한다.
+- API 형식 오류 `422`와 core 의미 검증 실패 `400`: 전용 오류 응답과 저장 미시도를 확인한다.
+- 저장 실패 `500`: rollback 성공 시 `rolled_back`, rollback 실패 시 `unknown`을 로그로 확인한다.
+- commit 후 응답 검증 실패 `500`: HTTP 오류와 DB commit을 구분한다.
+- `GET /alerts/{alert_id}`, `GET /alerts`: 단건 조회, `404`, 필터, 커서 페이지 이동과 입력 검증을 확인한다.
+- 요청 로그: 요청마다 `request_completed` 한 건과 `status_code`, `result`, `failure_stage`, `persistence_outcome`을 검증한다. 평가 성공 경로에서 헤더·본문·로그·DB의 `trace_id` 연결을 확인한다. 조회 성공 시 본문의 alert 생성 ID와 현재 조회 헤더 ID가 서로 다른 것도 검증한다.
 
-검증 대상:
-
-- /evaluate 정상 응답 contract
-- /health 정상 응답 contract
-- EvaluateResponse key set
-- SignalResponse key set
-- ErrorResponse key set
-- trace_id body/header consistency
-- 400 core_validation_error
-- 422 api_validation_error
-- 500 system_error boundary
-- critical override API response
-- failure signal이 risk_score에 합산되지 않는지 여부
-- API response에 내부 core 객체가 노출되지 않는지 여부
+`tests/DB_Test/`는 SQLite schema, foreign key, transaction rollback 및 repository 저장·조회를 검증한다. `tests/Benchmark_Test/`는 재현 가능한 workload와 manifest 계약을 검증한다. 측정 실행 및 결과 검증 절차는 [benchmark-contract.md](benchmark-contract.md)에 기록한다.
 
 ---
 
-### 8.1 Evaluate Endpoint Test
-
-검증 대상:
-
-```text
-POST /evaluate
-```
-
-주요 확인 사항:
-
-- 정상 요청은 200을 반환한다.
-- response body는 EvaluateResponse contract를 따른다.
-- response body trace_id와 X-Trace-Id header가 일치한다.
-- normal input은 INFO를 반환한다.
-- low confidence는 risk signal을 생성한다.
-- high latency는 risk signal을 생성한다.
-- combined risk는 CRITICAL로 연결된다.
-- missing model_version은 uncertainty signal을 생성한다.
-- critical override는 failure signal을 생성한다.
-- input normalization 결과가 response에 반영된다.
-
----
-
-### 8.2 API Validation Test
-
-검증 대상:
-
-```text
-FastAPI / Pydantic request schema validation
-```
-
-주요 확인 사항:
-
-- request body의 타입 또는 형식이 잘못되면 422 api_validation_error를 반환한다.
-- core pipeline으로 들어가기 전에 차단된다.
-- ErrorResponse contract를 따른다.
-- trace_id contract를 유지한다.
-
-예시:
-
-```text
-event_id = 1234
-confidence = "not-a-number"
-latency_ms = "slow"
-metadata = "not-an-object"
-```
-
----
-
-### 8.3 Core Validation Error Test
-
-검증 대상:
-
-```text
-core domain validation error → HTTP 400 mapping
-```
-
-주요 확인 사항:
-
-- API schema는 통과했지만 core domain rule을 위반하면 400을 반환한다.
-- error_type은 core_validation_error이다.
-- details는 빈 list이다.
-- trace_id contract를 유지한다.
-
-예시:
-
-```text
-confidence = 1.5
-latency_ms = -1
-decision_type = "pending"
-event_id = "   "
-```
-
----
-
-### 8.4 Trace ID Response Test
-
-검증 대상:
-
-```text
-trace_id consistency
-```
-
-주요 확인 사항:
-
-- 정상 응답에는 trace_id가 있다.
-- 에러 응답에도 trace_id가 있다.
-- 모든 응답 header에는 X-Trace-Id가 있다.
-- body.trace_id == response.headers["X-Trace-Id"] 이다.
-
-이 테스트는 향후 logging / observability 확장을 위한 기반이다.
-
----
-
-### 8.5 API Response Constraints Test
-
-검증 대상:
-
-```text
-external API response boundary
-```
-
-주요 확인 사항:
-
-- API response는 내부 core dataclass를 그대로 노출하지 않는다.
-- SignalResponse는 is_critical_override 필드를 사용한다.
-- is_high_risk 같은 과거 필드는 노출하지 않는다.
-- failure signal은 category="failure"로 노출된다.
-- risk_score와 uncertainty_score는 분리되어 노출된다.
-
----
-
-### 8.6 Health Endpoint Test
-
-검증 대상:
-
-```text
-GET /health
-```
-
-주요 확인 사항:
-
-- /health는 200을 반환한다.
-- response body에는 status="ok"가 있다.
-- response body에는 trace_id가 있다.
-- response header에는 X-Trace-Id가 있다.
-- body.trace_id와 X-Trace-Id header가 일치한다.
-
----
-
-## 9. Error Handling Tests
+## 9. 오류 처리 테스트
 
 API error handling은 다음 mapping을 검증한다.
 
@@ -689,6 +541,8 @@ API error handling은 다음 mapping을 검증한다.
 |---|---:|---|
 | Request schema/type error | 422 | `api_validation_error` |
 | Core domain validation error | 400 | `core_validation_error` |
+| Alert ID not found | 404 | `alert_not_found` |
+| Persistence failure | 500 | `persistence_error` |
 | Unexpected server error | 500 | `system_error` |
 
 이 구분은 중요하다.
@@ -706,7 +560,7 @@ API error handling은 다음 mapping을 검증한다.
 
 ---
 
-## 10. Critical Override Test Policy
+## 10. 평가 무결성 신호 테스트
 
 Critical override는 이 프로젝트에서 반드시 별도 테스트로 보호해야 하는 경로이다.
 
@@ -735,7 +589,7 @@ recommended_actions includes:
 
 ---
 
-## 11. How to Run Tests
+## 11. 테스트 실행
 
 전체 테스트 실행:
 
@@ -767,6 +621,12 @@ API test만 실행:
 python -m pytest tests/API_Test -v
 ```
 
+DB 및 benchmark workload test 실행:
+
+```bash
+python -m pytest tests/DB_Test tests/Benchmark_Test -v
+```
+
 특정 파일만 실행:
 
 ```bash
@@ -775,11 +635,11 @@ python -m pytest tests/API_Test/test_evaluate_endpoint.py -v
 
 ---
 
-## 12. When to Add New Tests
+## 12. 변경 시 테스트 보강 기준
 
 새 기능을 추가할 때는 다음 기준으로 테스트를 추가한다.
 
-### 12.1 Core rule 추가 시
+### 12.1 평가 규칙을 추가할 때
 
 추가해야 할 테스트:
 
@@ -795,12 +655,11 @@ Design_Invariant_Test/test_design_invariants.py
 
 ```text
 API_Test/test_evaluate_endpoint.py
-API_Test/test_api_response_constraints.py
 ```
 
 ---
 
-### 12.2 API endpoint 추가 시
+### 12.2 API 경로를 추가할 때
 
 추가해야 할 테스트:
 
@@ -821,14 +680,15 @@ internal object exposure 여부
 
 ---
 
-### 12.3 Persistence layer 추가 시
+### 12.3 저장·조회 계층을 변경할 때
 
-예상 추가 테스트:
+변경에 따라 보강할 테스트:
 
 ```text
-tests/Repository_Test/
-tests/API_Test/
-tests/Integration_Test/
+tests/DB_Test/test_alert_repository.py
+tests/API_Test/test_system_error.py
+tests/API_Test/test_get_alerts.py
+tests/API_Test/test_evaluate_endpoint.py
 ```
 
 검증해야 할 것:
@@ -836,7 +696,7 @@ tests/Integration_Test/
 ```text
 POST /evaluate 결과 저장
 GET /alerts 목록 조회
-GET /alerts/{event_id} 단건 조회
+GET /alerts/{alert_id} 단건 조회
 alert와 signal의 1:N 관계 보존
 alert와 action의 1:N 관계 보존
 DB failure handling
@@ -845,7 +705,7 @@ core가 DB에 의존하지 않는지 여부
 
 ---
 
-## 13. Why This Test Structure Matters
+## 13. 테스트 구조의 목적
 
 이 프로젝트는 단순한 rule-based alert 예제가 아니다.
 
@@ -865,9 +725,9 @@ core가 DB에 의존하지 않는지 여부
 
 ---
 
-## 14. Summary
+## 14. 요약
 
-이 프로젝트의 테스트 전략은 네 가지 목표를 가진다.
+이 프로젝트의 테스트 전략은 core, API, 저장소 및 고정 workload를 함께 검증한다.
 
 - 각 step의 기능이 올바르게 동작하는지 확인한다.
 - 전체 core pipeline이 대표 케이스에서 설계대로 연결되는지 확인한다.
