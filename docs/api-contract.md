@@ -69,6 +69,8 @@ core 평가 함수가 담당하는 일:
 
 저장된 alert의 정수 `alert_id`로 조회한다. 찾으면 `200`과 `AlertDetailResponse`를 반환한다. 없으면 `404 alert_not_found`를 반환한다. 조회 응답의 본문 `trace_id`는 생성 요청 ID이므로 조회 요청의 헤더와 같을 필요가 없다.
 
+단건 조회와 목록의 각 항목은 동일한 조회 응답 모델을 사용한다. 조회 응답에서는 alert 및 signal의 metadata를 제외하며, signal의 evidence는 규칙별 허용 키만 제공한다. 입력 누락을 나타내는 null은 보존한다. 이 제한은 GET 조회 응답에 적용되며, DB 원본 데이터는 보존한다.
+
 ### `GET /alerts`: 목록 조회
 
 | 조회 조건 | 의미 |

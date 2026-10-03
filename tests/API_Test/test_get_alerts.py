@@ -52,7 +52,6 @@ def test_get_alert_by_id_returns_stored_alert(test_db_path):
         "recommended_actions",
         "reason_summary",
         "signals",
-        "metadata",
     }
 
     assert body["alert_id"] == saved.alert_id
@@ -64,7 +63,6 @@ def test_get_alert_by_id_returns_stored_alert(test_db_path):
     assert body["human_required"] is alert.human_required
     assert body["recommended_actions"] == alert.recommended_actions
     assert body["reason_summary"] == alert.reason_summary
-    assert body["metadata"] == alert.metadata
 
     expected_signals = [
         {
@@ -74,7 +72,6 @@ def test_get_alert_by_id_returns_stored_alert(test_db_path):
             "reason": signal.reason,
             "evidence": signal.evidence,
             "is_critical_override": signal.is_critical_override,
-            "metadata": signal.metadata,
         }
         for signal in alert.signals
     ]
@@ -206,8 +203,6 @@ def test_get_search_alerts_returns_alerts_in_search_order(test_db_path):
     assert second_result["trace_id"] == "trace_get_alert_002"
     assert first_result["recommended_actions"] == second_alert.recommended_actions
     assert second_result["recommended_actions"] == first_alert.recommended_actions
-    assert first_result["metadata"] == second_alert.metadata
-    assert second_result["metadata"] == first_alert.metadata
     assert len(first_result["signals"]) == len(second_alert.signals)
     assert len(second_result["signals"]) == len(first_alert.signals)
     assert [signal["rule_id"] for signal in first_result["signals"]] == [signal.rule_id for signal in second_alert.signals]
