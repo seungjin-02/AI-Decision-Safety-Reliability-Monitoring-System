@@ -10,3 +10,6 @@ benchmarks/results/
 *.db-wal
 *.db-shm
 *.db-journal
+
+# Generated dashboard runtime files
+/frontend/dist/

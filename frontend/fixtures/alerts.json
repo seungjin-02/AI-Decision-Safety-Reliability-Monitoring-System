@@ -1,0 +1,181 @@
+{
+  "count": 6,
+  "limit": 6,
+  "alerts": [
+    {
+      "alert_id": 18,
+      "trace_id": "trace_preview_018",
+      "created_at": "2026-10-03T05:32:18+00:00",
+      "event_id": "evt_review_018",
+      "level": "CRITICAL",
+      "risk_score": 0,
+      "uncertainty_score": 0,
+      "human_required": true,
+      "recommended_actions": [
+        "human_review_required",
+        "immediate_investigation",
+        "escalate_incident"
+      ],
+      "reason_summary": "critical override signal requires critical interpretation and human review",
+      "signals": [
+        {
+          "rule_id": "evaluation_integrity_override",
+          "category": "failure",
+          "score": 0,
+          "reason": "evaluation integrity failure requires critical review",
+          "evidence": {
+            "error_code": "timeout_01"
+          },
+          "is_critical_override": true
+        }
+      ]
+    },
+    {
+      "alert_id": 17,
+      "trace_id": "trace_preview_017",
+      "created_at": "2026-10-03T05:29:46+00:00",
+      "event_id": "evt_review_017",
+      "level": "WARN",
+      "risk_score": 3,
+      "uncertainty_score": 0,
+      "human_required": false,
+      "recommended_actions": [
+        "monitor_closely"
+      ],
+      "reason_summary": "medium risk with low uncertainty can be handled as warning-level interpretation",
+      "signals": [
+        {
+          "rule_id": "approve_confidence_low",
+          "category": "risk",
+          "score": 3,
+          "reason": "approve decision with low confidence",
+          "evidence": {
+            "decision_type": "approve",
+            "confidence": 0.3
+          },
+          "is_critical_override": false
+        }
+      ]
+    },
+    {
+      "alert_id": 16,
+      "trace_id": "trace_preview_016",
+      "created_at": "2026-10-03T05:25:03+00:00",
+      "event_id": "evt_review_016",
+      "level": "WARN",
+      "risk_score": 3,
+      "uncertainty_score": 1,
+      "human_required": true,
+      "recommended_actions": [
+        "human_review_required",
+        "review_missing_or_incomplete_information",
+        "monitor_closely"
+      ],
+      "reason_summary": "medium risk with uncertainty requires human review before final interpretation",
+      "signals": [
+        {
+          "rule_id": "approve_confidence_low",
+          "category": "risk",
+          "score": 3,
+          "reason": "approve decision with low confidence",
+          "evidence": {
+            "decision_type": "approve",
+            "confidence": 0.3
+          },
+          "is_critical_override": false
+        },
+        {
+          "rule_id": "missing_model_version",
+          "category": "uncertainty",
+          "score": 1,
+          "reason": "model_version field is missing",
+          "evidence": {
+            "model_version": null
+          },
+          "is_critical_override": false
+        }
+      ]
+    },
+    {
+      "alert_id": 15,
+      "trace_id": "trace_preview_015",
+      "created_at": "2026-10-03T05:18:57+00:00",
+      "event_id": "evt_review_015",
+      "level": "INFO",
+      "risk_score": 0,
+      "uncertainty_score": 0,
+      "human_required": false,
+      "recommended_actions": [
+        "no_immediate_action_required"
+      ],
+      "reason_summary": "risk signals remain low and do not require escalation",
+      "signals": []
+    },
+    {
+      "alert_id": 14,
+      "trace_id": "trace_preview_014",
+      "created_at": "2026-10-03T05:12:41+00:00",
+      "event_id": "evt_review_014",
+      "level": "CRITICAL",
+      "risk_score": 5,
+      "uncertainty_score": 0,
+      "human_required": true,
+      "recommended_actions": [
+        "human_review_required",
+        "escalate_incident"
+      ],
+      "reason_summary": "high risk score with low uncertainty allows critical escalation",
+      "signals": [
+        {
+          "rule_id": "approve_confidence_low",
+          "category": "risk",
+          "score": 3,
+          "reason": "approve decision with low confidence",
+          "evidence": {
+            "decision_type": "approve",
+            "confidence": 0.3
+          },
+          "is_critical_override": false
+        },
+        {
+          "rule_id": "latency_high",
+          "category": "risk",
+          "score": 2,
+          "reason": "response latency exceeded threshold",
+          "evidence": {
+            "latency_ms": 2800
+          },
+          "is_critical_override": false
+        }
+      ]
+    },
+    {
+      "alert_id": 19,
+      "trace_id": "trace_info_example_019",
+      "created_at": "2026-10-03T05:35:00+00:00",
+      "event_id": "evt_info_missing_019",
+      "level": "INFO",
+      "risk_score": 0,
+      "uncertainty_score": 1,
+      "human_required": false,
+      "recommended_actions": [
+        "review_missing_or_incomplete_information",
+        "no_immediate_action_required"
+      ],
+      "reason_summary": "risk remains low, while uncertainty is present; action-level caution is recommended",
+      "signals": [
+        {
+          "rule_id": "missing_model_version",
+          "category": "uncertainty",
+          "score": 1,
+          "reason": "model_version field is missing",
+          "evidence": {
+            "model_version": null
+          },
+          "is_critical_override": false
+        }
+      ]
+    }
+  ],
+  "next_cursor": null
+}
