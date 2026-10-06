@@ -8,6 +8,15 @@ from pydantic import (
 )
 from datetime import datetime
 
+ALERT_EVIDENCE_FIELDS = {
+    "approve_confidence_low": ("decision_type", "confidence"),
+    "latency_high": ("latency_ms",),
+    "missing_confidence": ("confidence",),
+    "missing_model_version": ("model_version",),
+    "evaluation_integrity_override": ("error_code",),
+    "stability_signal": (),
+}
+
 class EvaluateRequest(BaseModel):
     event_id: str
     decision_type: str | None = None
@@ -73,9 +82,31 @@ class AlertSearchQuery(BaseModel):
 
         return self
 
+class AlertSignalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    rule_id: str
+    category: str
+    score: int
+    reason: str
+    evidence: dict[str, Any]
+    is_critical_override: bool
+
+    @model_validator(mode="after")
+    def filter_evidence_fields(self) -> "AlertSignalResponse":
+        allowed_fields = ALERT_EVIDENCE_FIELDS.get(self.rule_id, ())
+
+        filtered_evidence = {}
+
+        for field_name in allowed_fields:
+            if field_name in self.evidence:
+                filtered_evidence[field_name] = self.evidence[field_name]
+
+        self.evidence = filtered_evidence
+
+        return self
+
 class AlertDetailResponse(BaseModel):
-    # 딕셔너리 키가 아니라 객체 속성(detail.alert_id 등)에서 필드 값을 읽는다.
-    # Repository의 AlertDetail dataclass를 API 응답 모델로 검증·변환하기 위한 설정이다.
     model_config = ConfigDict(from_attributes=True)
 
     alert_id: int
@@ -88,8 +119,7 @@ class AlertDetailResponse(BaseModel):
     human_required: bool
     recommended_actions: list[str]
     reason_summary: str
-    signals: list[SignalResponse]
-    metadata: dict[str, Any]
+    signals: list[AlertSignalResponse]
 
 class AlertCursorResponse(BaseModel):
     created_at: AwareDatetime
