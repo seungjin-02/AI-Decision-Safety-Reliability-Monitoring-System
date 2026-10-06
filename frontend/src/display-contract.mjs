@@ -58,42 +58,76 @@ export const statusText = Object.freeze({
   invalid:'응답 데이터를 확인할 수 없습니다.'
 });
 export function createController(adapter, onChange = () => {}) {
-  const state = {query:{level:'',human:''},list:{phase:'loading',data:null},detail:{phase:'idle',data:null},selected:null};
-  let listRequest = 0, detailRequest = 0;
+  const state = {
+    query: {level: '', human: ''},
+    list: {phase: 'loading', data: null},
+    detail: {phase: 'idle', data: null},
+    selected: null
+  };
+  let listRequest = 0;
+  let detailRequest = 0;
   const notify = () => onChange(state);
-  function close() { detailRequest++; state.selected=null; state.detail={phase:'idle',data:null}; notify(); }
+
+  function close() {
+    detailRequest++;
+    state.selected = null;
+    state.detail = {phase: 'idle', data: null};
+    notify();
+  }
+
   async function select(id) {
     const request = ++detailRequest;
-    state.selected=id; state.detail={phase:'loading',data:null}; notify();
+    state.selected = id;
+    state.detail = {phase: 'loading', data: null};
+    notify();
     try {
       const data = await adapter.detail(id);
       if (request !== detailRequest) return;
       validateAlert(data);
       requireValid(data.alert_id === id);
-      state.detail={phase:'success',data};
+      state.detail = {phase: 'success', data};
     } catch (error) {
       if (request !== detailRequest) return;
-      state.detail={phase:error instanceof ResponseDataError?'invalid':error instanceof PreviewNotFound?'notfound':'error',data:null};
+      let phase = 'error';
+      if (error instanceof ResponseDataError) {
+        phase = 'invalid';
+      } else if (error instanceof PreviewNotFound) {
+        phase = 'notfound';
+      }
+      state.detail = {phase, data: null};
     }
     notify();
   }
-  async function load(query=state.query, initialSelection=null) {
+  async function load(query = state.query, initialSelection = null) {
     const previous = state.selected;
     const request = ++listRequest;
     detailRequest++;
-    state.query={...query}; state.list={phase:'loading',data:null}; state.selected=null; state.detail={phase:'idle',data:null}; notify();
+    state.query = {...query};
+    state.list = {phase: 'loading', data: null};
+    state.selected = null;
+    state.detail = {phase: 'idle', data: null};
+    notify();
     try {
       const response = await adapter.list({...query});
       if (request !== listRequest) return;
       validateList(response);
       const data = [...response.alerts].sort((a,b) => Date.parse(b.created_at)-Date.parse(a.created_at) || b.alert_id-a.alert_id);
-      state.list={phase:'success',data}; notify();
+      state.list = {phase: 'success', data};
+      notify();
       const id = initialSelection ?? previous;
       if (id !== null && data.some(a=>a.alert_id===id)) await select(id);
     } catch (error) {
       if (request !== listRequest) return;
-      state.list={phase:error instanceof ResponseDataError?'invalid':'error',data:null}; state.selected=null; state.detail={phase:'idle',data:null}; notify();
+      const phase = error instanceof ResponseDataError ? 'invalid' : 'error';
+      state.list = {phase, data: null};
+      state.selected = null;
+      state.detail = {phase: 'idle', data: null};
+      notify();
     }
   }
-  return {state,load,select,close,retryList:()=>load(),retryDetail:()=>select(state.selected)};
+  return {
+    state, load, select, close,
+    retryList: () => load(),
+    retryDetail: () => select(state.selected)
+  };
 }
