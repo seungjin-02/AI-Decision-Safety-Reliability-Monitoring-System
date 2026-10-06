@@ -1,43 +1,50 @@
 # C2 의사결정 모니터
 
-현재는 **예시 데이터 기반** 정적 화면이다. FastAPI·DB·인증 연결은 없다. 기존 목록/상세 배치와 Day5 표시 계약을 유지한다.
+FastAPI와 화면이 같은 출처에서 동작한다. 기존 C2 배치와 Day5 표시 계약을 유지하며, 서버 판단값과 사유 원문을 그대로 표시한다. API 실패 시 예시 데이터로 자동 전환하지 않는다.
 
-환경: Python 3.12+, Node.js 24+ (확인: Python 3.12.10 / Node 24.16.0). npm 설치는 필요 없다. package.json은 .js의 ES module 타입만 지정한다. 글꼴은 기존 외부 CDN을 사용한다.
+- `/dashboard/`: 기본 API 모드, **로컬 API 연결**.
+- `/dashboard/?mode=mock`: 명시적 예시 모드, **예시 데이터**.
+- `/dashboard/?mode=mock&preview=detail-error`: mock에만 preview 적용. API 모드의 preview는 무시한다.
 
-저장소 루트에서:
+환경: Python 3.12+, Node.js 24+. npm 설치는 필요 없다. package.json은 JS의 ES module 타입만 지정한다. 글꼴은 기존 CDN을 사용한다.
+
+저장소 루트에서 준비:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 python frontend/build_web.py
-python -m http.server 8766 --bind 127.0.0.1 --directory frontend/dist
 ```
 
-`http://127.0.0.1:8766/`에서 확인하고 서버는 Ctrl+C로 종료한다. 브라우저 ES module을 위해 HTTP로 실행한다.
+시연은 **새 격리 DB**로 실행한다. 아래 서버는 기존 파일과 기본 `data/alerts.db` 경로를 거부한다. 경로가 이미 있으면 다른 새 경로를 지정한다.
 
-검증 순서:
+```powershell
+.\.venv\Scripts\python.exe frontend/demo_server.py --db ../day7-demo-new/alerts.db --port 8000
+```
+
+[API 화면](http://127.0.0.1:8000/dashboard/)과 [예시 화면](http://127.0.0.1:8000/dashboard/?mode=mock)을 연다. 서버는 Ctrl+C로 종료한다. 별도 프론트 서버나 CORS 설정은 없다. 기존 백엔드 실행 환경에서는 `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`도 사용할 수 있다. 이 명령은 기존 기본 DB 경로를 사용하므로 위 시연 실행과 구분한다.
+
+다른 터미널에서 새 시연 DB가 비어 있을 때만, 실제 POST/GET·core 비교를 실행한다. 이 스크립트는 비민감 예시 6건을 생성한다. 대시보드에는 POST 기능이 없다.
+
+```powershell
+.\.venv\Scripts\python.exe frontend/tests/verify-local-api.py --db ../day7-demo-new/alerts.db --port 8000 --output ../day7-demo-new/http-evidence.json
+```
+
+검증:
 
 ```powershell
 python frontend/build_web.py
-node --test --test-isolation=none frontend/tests/display-contract.test.mjs frontend/tests/render-contract.test.mjs
+node --test --test-isolation=none frontend/tests/display-contract.test.mjs frontend/tests/render-contract.test.mjs frontend/tests/api-integration.test.mjs
 python -B frontend/tests/output-safety.test.py
-node --check frontend/dist/app.js
-node --check frontend/dist/entry.js
-node --check frontend/dist/mock-adapter.js
-node --check frontend/dist/display-contract.js
 python -B frontend/tests/verify-core-examples.py
+Get-ChildItem frontend/dist/*.js | ForEach-Object { node --check $_.FullName }
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-- src/index.html: HTML 틀과 예시 JSON 삽입 위치.
-- src/app.js: 렌더링·필터·선택·재시도 연결. createDashboard는 모의 DOM과 실제 브라우저에서 동일하게 사용한다.
-- src/entry.js: 예시 응답 파싱과 앱 시작. 작은 진입점을 분리해 테스트가 bootstrap 문자열 위치에 의존하지 않게 했다.
-- src/display-contract.mjs: 응답 검증·상태 관리·명시적 한글 매핑.
-- src/mock-adapter.js: list(query)/detail(id)의 모의 조회. **실제 API 연결 때 교체할 위치**다. 내부 human 필터는 연결 시 서버 human_required로 변환해야 한다.
-- src/styles.css: 현재 C2 디자인.
-- fixtures/alerts.json: 여섯 정상 예시 응답. 판단값과 원문을 보존한다.
-- build_web.py: 명시적 파일 복사, 안전한 인라인 JSON, .mjs→.js 경로 변환. 필수 입력/표식 오류와 예상하지 않은 출력 파일은 실패 처리한다.
-- tests/: 표시 계약·HTML 출력·출력 해석·같은 저장소 core 재현 비교.
+실제 연결 흐름은 `entry.js`의 모드 선택 → `api-adapter.js`의 루트 상대 GET `/alerts?limit=5` 또는 `/alerts/{id}` → `display-contract.mjs`의 응답 검증·상태 관리 → `app.js`의 전체 렌더링이다. HTTP 상태/JSON 오류는 adapter가, 필수 필드·선택 ID·늦은 응답은 controller가 처리한다. render는 HTTP 호출이나 core 판단을 하지 않는다. level/human 필터는 서버에 AND 조건으로 전달하며 `false`를 생략하지 않는다. 서버 목록 순서를 보존하고 전체 건수·페이지 탐색 UI는 만들지 않는다.
 
-**dist는 생성물이며 Git에서 제외된다. 직접 수정하지 않는다.** frontend 원본만으로 빌드할 수 있으며 과거 디자인 폴더·Sites 설정은 필요 없다. 빌드에는 실행용 6개 파일만 포함한다.
+mock은 fixture 조회·필터·정렬만 담당한다. 전체 응답 검증은 controller에 있고, mock에는 lookup/filter/sort에 필요한 필드의 접근 검사만 남겼다. API 모드는 fixture JSON 파싱에 의존하지 않는다.
 
-예시 모의 상태: URL의 `?preview=`에 list-loading/list-empty/list-error/list-invalid, detail-loading/detail-404/detail-error/detail-invalid, empty-evidence/empty-signals/empty-actions/values, unknown-failure/unknown-rule. 메뉴는 추가하지 않는다. 오류 예시는 첫 요청만 실패해 재시도를 확인한다.
+**dist는 Git 제외 생성물이다. 직접 수정하지 않는다.** build_web.py는 원본과 fixture만으로 실행 파일 7개를 만든다. FastAPI는 `frontend/dist/`만 `/dashboard/`에 제공한다. dist/index.html이 없으면 대시보드는 503과 빌드 안내를 표시하지만 기존 API의 import와 기동은 유지한다. `/docs`와 루트 GET 경로를 가리지 않는다.
 
-계약 및 검증 한계는 DESIGN.md와 DAY6-REVIEW.md를 참고한다. 실제 GET 연결·HTTP 오류·서버 필터/커서·조회 trace는 후속 작업이다.
+구현·자동 테스트·실제 HTTP/브라우저 검증의 구분과 당시 보류 이력은 `DAY7-BASE-REVIEW.md`에 있다. Day8 상세 필터 조합·해제 검증, 출시·인증·접근성 작업은 이번 범위에 포함하지 않았다.

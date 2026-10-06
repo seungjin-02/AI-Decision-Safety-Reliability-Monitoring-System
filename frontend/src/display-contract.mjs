@@ -1,6 +1,6 @@
 // Display contract only. No scoring, classification or action recommendation.
 export class ResponseDataError extends Error {}
-export class PreviewNotFound extends Error {}
+export class AlertNotFound extends Error {}
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const integer = Number.isSafeInteger;
 const date = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
@@ -91,7 +91,7 @@ export function createController(adapter, onChange = () => {}) {
       let phase = 'error';
       if (error instanceof ResponseDataError) {
         phase = 'invalid';
-      } else if (error instanceof PreviewNotFound) {
+      } else if (error instanceof AlertNotFound) {
         phase = 'notfound';
       }
       state.detail = {phase, data: null};
@@ -111,7 +111,7 @@ export function createController(adapter, onChange = () => {}) {
       const response = await adapter.list({...query});
       if (request !== listRequest) return;
       validateList(response);
-      const data = [...response.alerts].sort((a,b) => Date.parse(b.created_at)-Date.parse(a.created_at) || b.alert_id-a.alert_id);
+      const data = response.alerts;
       state.list = {phase: 'success', data};
       notify();
       const id = initialSelection ?? previous;

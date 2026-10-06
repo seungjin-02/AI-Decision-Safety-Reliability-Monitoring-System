@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {validateAlert,validateList,ResponseDataError,PreviewNotFound,signalReason,summaryFor,evidenceValues,createController} from '../src/display-contract.mjs';
+import {validateAlert,validateList,ResponseDataError,AlertNotFound,signalReason,summaryFor,evidenceValues,createController} from '../src/display-contract.mjs';
 const response=JSON.parse(fs.readFileSync(new URL('../fixtures/alerts.json',import.meta.url),'utf8'));
 const original=response.alerts;
 const infoExample=original.find(a=>a.alert_id===19);
@@ -70,7 +70,7 @@ test('loading clears old detail; retry recovers a failed request without showing
  await c.retryDetail();assert.equal(c.state.detail.data.alert_id,17);
 });
 test('detail 404, invalid fields and mismatched alert identity are not normal results',async()=>{
- const notFound=createController({detail:async()=>{throw new PreviewNotFound()}});await notFound.select(18);assert.equal(notFound.state.detail.phase,'notfound');
+ const notFound=createController({detail:async()=>{throw new AlertNotFound()}});await notFound.select(18);assert.equal(notFound.state.detail.phase,'notfound');
  const bad=copy(18);delete bad.human_required;const invalid=createController({detail:async()=>bad});await invalid.select(18);assert.equal(invalid.state.detail.phase,'invalid');assert.equal(invalid.state.detail.data,null);
  const mismatch=createController({detail:async()=>copy(17)});await mismatch.select(18);assert.equal(mismatch.state.detail.phase,'invalid');
 });

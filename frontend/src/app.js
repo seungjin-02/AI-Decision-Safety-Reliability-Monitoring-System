@@ -18,8 +18,16 @@ const paths = {
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
 const actionNames = {human_review_required:'사람의 검토 수행',immediate_investigation:'즉시 조사',escalate_incident:'사고 대응 단계로 전달',monitor_closely:'주의 깊게 모니터링',review_missing_or_incomplete_information:'누락되거나 불완전한 정보 검토',no_immediate_action_required:'즉각적인 조치 요구 없음'};
 const categoryNames={risk:'위험 신호',uncertainty:'불확실성 신호',failure:'실패 신호'};
-function timeParts(a){const date = new Date(new Date(a.created_at).getTime()+9*3600000).toISOString();return {date:date.slice(0,10).replaceAll('-','.'),time:date.slice(11,19)}}
-const sev = a => `<span class="sev ${a.level}">${icon(a.level==='CRITICAL'?'critical':a.level==='WARN'?'warn':'info')}<span>${a.level}</span>
+function timeParts(alert) {
+  const date = new Date(new Date(alert.created_at).getTime() + 9 * 3600000).toISOString();
+  return {date: date.slice(0, 10).replaceAll('-', '.'), time: date.slice(11, 19)};
+}
+function levelIcon(level) {
+  if (level === 'CRITICAL') return icon('critical');
+  if (level === 'WARN') return icon('warn');
+  return icon('info');
+}
+const sev = a => `<span class="sev ${a.level}">${levelIcon(a.level)}<span>${a.level}</span>
     </span>`;
 const review = a => `<span class="review-status ${a.human_required?'':'none'}">${icon(a.human_required?'person':'minus')}<span>${a.human_required?'검토 필요':'검토 요구 없음'}</span>
     </span>`;
@@ -48,7 +56,7 @@ function queue(items,selected){
     <span>생성 시각 · KST</span>
     </div>
     <div class="inbox-list">${items.map(a=>`<article class="inbox-row ${a.alert_id===selected?'selected':''}" aria-label="${esc(a.event_id)}">
-    <div class="inbox-icon ${a.level==='CRITICAL'?'critical':''}">${icon(a.level==='CRITICAL'?'critical':a.level==='WARN'?'warn':'info')}</div>
+    <div class="inbox-icon ${a.level==='CRITICAL'?'critical':''}">${levelIcon(a.level)}</div>
     <div class="inbox-main">
     <p class="inbox-summary">${esc(summaryFor(a))}</p>
     <div class="inbox-topline">
@@ -79,33 +87,38 @@ function scores(a){
     </div>
     <p class="score-note">점수는 범주별 신호 점수 합계입니다.${a.signals.some(s=>s.is_critical_override)?'<br>서버 응답에 강제 CRITICAL 규칙 적용이 표시되어 있습니다.':''}</p>`;
 }
-function signals(a) {
-  if (a.signals.length === 0) {
+function signals(alert) {
+  if (alert.signals.length === 0) {
     return '<p class="empty-signals">발동된 평가 신호가 없습니다.</p>';
   }
-  return a.signals.map(s=>`<article class="signal">
-    <div class="signal-top">
-    <code>${esc(s.rule_id)}</code>
-    <span class="category">${Object.hasOwn(categoryNames,s.category)?categoryNames[s.category]:esc(s.category)}</span>
-    </div>
-    <div class="signal-content">
-    <p class="signal-reason">${esc(signalReason(s))}</p>
-    <details class="raw-reason">
-    <summary>사유 원문 보기</summary>
-    <code>${esc(s.reason)}</code>
-    </details>
-    <div class="evidence-title">
-    <span>판단 근거</span>
-    <code>evidence</code>
-    </div>${Object.keys(s.evidence).length?`<div class="evidence">${evidenceValues(s.evidence).map(v=>`<div class="evidence-row">
-    <code class="key">${esc(v.key)}</code>
-    <div class="${v.missing?'missing-evidence':''}">${v.missing?'<span>입력값 없음</span>':''}<code>${esc(v.raw)}</code>
-    </div>
-    </div>`).join('')}</div>`:'<p class="empty-evidence">표시할 판단 근거가 없습니다.</p>'}<div class="signal-notes">
-    <span>신호 점수 <code>${s.score}</code>
-    </span>${s.is_critical_override?'<span>서버의 강제 CRITICAL 규칙 적용</span>':''}</div>
-    </div>
-    </article>`).join('');
+  return alert.signals.map(signal => {
+    const category = Object.hasOwn(categoryNames, signal.category)
+      ? categoryNames[signal.category] : esc(signal.category);
+    let evidence = '<p class="empty-evidence">표시할 판단 근거가 없습니다.</p>';
+    if (Object.keys(signal.evidence).length > 0) {
+      const rows = evidenceValues(signal.evidence).map(value => `<div class="evidence-row">
+        <code class="key">${esc(value.key)}</code>
+        <div class="${value.missing ? 'missing-evidence' : ''}">${value.missing ? '<span>입력값 없음</span>' : ''}<code>${esc(value.raw)}</code></div>
+      </div>`).join('');
+      evidence = `<div class="evidence">${rows}</div>`;
+    }
+    const overrideNote = signal.is_critical_override
+      ? '<span>서버의 강제 CRITICAL 규칙 적용</span>' : '';
+    return `<article class="signal">
+      <div class="signal-top">
+        <code>${esc(signal.rule_id)}</code><span class="category">${category}</span>
+      </div>
+      <div class="signal-content">
+        <p class="signal-reason">${esc(signalReason(signal))}</p>
+        <details class="raw-reason">
+          <summary>사유 원문 보기</summary><code>${esc(signal.reason)}</code>
+        </details>
+        <div class="evidence-title"><span>판단 근거</span><code>evidence</code></div>
+        ${evidence}
+        <div class="signal-notes"><span>신호 점수 <code>${signal.score}</code></span>${overrideNote}</div>
+      </div>
+    </article>`;
+  }).join('');
 }
 function trace(a){
   return `<section class="trace" aria-labelledby="trace-title">
@@ -130,7 +143,18 @@ function trace(a){
     </dl>
     </section>`;
 }
-function detail(a){
+function detail(a) {
+  let actions = '<p class="empty-actions">제공된 권장 조치가 없습니다.</p>';
+  if (a.recommended_actions.length > 0) {
+    const rows = a.recommended_actions.map((code, index) => {
+      const name = Object.hasOwn(actionNames, code) ? actionNames[code] : esc(code);
+      return `<li>
+        <span class="action-index mono">${String(index + 1).padStart(2, '0')}</span>
+        <div><span class="action-name">${name}</span><code class="action-code">${esc(code)}</code></div>
+      </li>`;
+    }).join('');
+    actions = `<ol class="recommendations">${rows}</ol>`;
+  }
   return `<div class="inspector-head">
     <span class="selected-label">${icon('list')}평가 상세</span>
     <button id="close" class="view-action" aria-label="상세 패널 닫기">${icon('close')}</button>
@@ -161,19 +185,13 @@ function detail(a){
     <div class="section-header">
     <h2 id="actions-title">권장 조치</h2>
     <span class="cap">recommended_actions</span>
-    </div>${a.recommended_actions.length?`<ol class="recommendations">${a.recommended_actions.map((code,i)=>`<li>
-    <span class="action-index mono">${String(i+1).padStart(2,'0')}</span>
-    <div>
-    <span class="action-name">${Object.hasOwn(actionNames,code)?actionNames[code]:esc(code)}</span>
-    <code class="action-code">${esc(code)}</code>
-    </div>
-    </li>`).join('')}</ol>`:'<p class="empty-actions">제공된 권장 조치가 없습니다.</p>'}</section>${trace(a)}`;
+    </div>${actions}</section>${trace(a)}`;
 }
 function stateMessage(phase,where){
   return `<div class="state-message" role="${['error','invalid','notfound'].includes(phase)?'alert':'status'}">
     <p>${statusText[phase]}</p>${phase==='error'?`<button id="retry-${where}">다시 시도</button>`:''}</div>`;
 }
-export function renderDashboard(state, document, controller){
+export function renderDashboard(state, document, controller, mode = 'mock'){
  const focused=document.activeElement;
  const focusId=focused?.id;
  const focusSelection=focused?.getAttribute('data-select');
@@ -204,7 +222,7 @@ export function renderDashboard(state, document, controller){
     <div class="mast-right">
     <span class="small">내부 운영</span>
     <span class="mast-divider"></span>
-    <span class="environment">예시 데이터</span>
+    <span class="environment">${mode === 'api' ? '로컬 API 연결' : '예시 데이터'}</span>
     <span class="prototype-note">C2 · 검토용</span>
     </div>
     </header>
@@ -229,7 +247,7 @@ export function renderDashboard(state, document, controller){
  else if(focusSelection)document.querySelector(`[data-select="${focusSelection}"]`)?.focus({preventScroll:true});
 }
 
-export function createDashboard(adapter,document){
- const controller=createController(adapter,state=>renderDashboard(state,document,controller));
+export function createDashboard(adapter,document,mode = 'mock'){
+ const controller=createController(adapter,state=>renderDashboard(state,document,controller,mode));
  return controller;
 }

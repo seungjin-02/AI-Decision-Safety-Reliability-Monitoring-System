@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-FILES = ('index.html','app.js','entry.js','mock-adapter.js','display-contract.js','styles.css')
+FILES = ('index.html','app.js','entry.js','api-adapter.js','mock-adapter.js','display-contract.js','styles.css')
 
 def inline_json(value):
     # Escape raw-text HTML delimiters while preserving JSON.parse output.
@@ -14,7 +14,7 @@ def build(root=None, output=None):
     root=Path(root or Path(__file__).resolve().parent).resolve()
     output=Path(output or root/'dist').resolve()
     sources={name:(root/'src'/name).read_text(encoding='utf-8')
-             for name in ('index.html','app.js','entry.js','mock-adapter.js','display-contract.mjs','styles.css')}
+             for name in ('index.html','app.js','entry.js','api-adapter.js','mock-adapter.js','display-contract.mjs','styles.css')}
     response=json.loads((root/'fixtures/alerts.json').read_text(encoding='utf-8'))
     if not isinstance(response,dict) or not isinstance(response.get('alerts'),list):
         raise ValueError('fixtures/alerts.json must contain an alerts array')
@@ -24,7 +24,7 @@ def build(root=None, output=None):
     results={'index.html':template.replace('__ALERT_FIXTURES__',inline_json(response)),
              'display-contract.js':sources['display-contract.mjs'],
              'styles.css':sources['styles.css']}
-    for name in ('app.js','entry.js','mock-adapter.js'):
+    for name in ('app.js','entry.js','api-adapter.js','mock-adapter.js'):
         source=sources[name]
         if name!='entry.js' and source.count("'./display-contract.mjs'")!=1:
             raise ValueError(f'{name}: expected one explicit display-contract import')

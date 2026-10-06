@@ -52,7 +52,7 @@ test('real render branches distinguish empty/error/404/invalid and wire retry bu
  await failed.controller.load();assert.ok(failed.html().includes(expected.error));assert.ok(failed.html().includes('id="retry-list"'));assert.ok(!failed.html().includes(expected.empty));
  await failed.click('retry-list');assert.ok(failed.html().includes(expected.empty));
  for(const phase of ['error','notfound','invalid']){
-  let attempt=0;const h=harness({detail:async id=>{if(++attempt===1){if(phase==='notfound')throw new contract.PreviewNotFound();if(phase==='error')throw Error('network');const bad=copy(id);delete bad.human_required;return bad;}return copy(id);}});
+  let attempt=0;const h=harness({detail:async id=>{if(++attempt===1){if(phase==='notfound')throw new contract.AlertNotFound();if(phase==='error')throw Error('network');const bad=copy(id);delete bad.human_required;return bad;}return copy(id);}});
   await h.controller.select(18);assert.ok(h.panel().includes(expected[phase]));assert.ok(!h.panel().includes('class="detail-intro"'));
   assert.equal(h.panel().includes('id="retry-detail"'),phase==='error');
   if(phase==='error'){await h.click('retry-detail');assert.ok(h.panel().includes('evt_review_018'));}
@@ -66,7 +66,7 @@ test('switching from a successful detail immediately renders loading then failur
   const request=h.controller.select(17);
   assert.ok(h.panel().includes('Alert를 불러오는 중입니다.'));assert.ok(!h.panel().includes('evt_review_018'));assert.deepEqual(scores(h.panel()),[]);
   if(phase==='invalid'){const bad=copy(17);bad.risk_score='3';pending.resolve(bad);}
-  else pending.reject(phase==='notfound'?new contract.PreviewNotFound():Error('network'));
+  else pending.reject(phase==='notfound'?new contract.AlertNotFound():Error('network'));
   await request;assert.ok(h.panel().includes(contract.statusText[phase]));assert.ok(!h.panel().includes('evt_review_018'));assert.deepEqual(actions(h.panel()),[]);
  }
 });
