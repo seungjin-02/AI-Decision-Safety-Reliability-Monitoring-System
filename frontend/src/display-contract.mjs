@@ -20,10 +20,12 @@ export function validateAlert(a) {
   // GET metadata is neither required nor presented.
   return a;
 }
-export function validateList(response) {
+export function validateList(response, requestedLimit = response?.limit) {
   requireValid(object(response) && integer(response.count) && response.count >= 0 && integer(response.limit) && response.limit >= 1 && response.limit <= 100 && Array.isArray(response.alerts));
   response.alerts.forEach(validateAlert);
-  if (response.next_cursor !== undefined && response.next_cursor !== null) {
+  requireValid(response.limit === requestedLimit && response.count === response.alerts.length && response.count <= response.limit);
+  requireValid(Object.hasOwn(response, 'next_cursor'));
+  if (response.next_cursor !== null) {
     requireValid(object(response.next_cursor) && integer(response.next_cursor.alert_id) && response.next_cursor.alert_id > 0 && date(response.next_cursor.created_at));
   }
   return response;
@@ -59,25 +61,39 @@ export const statusText = Object.freeze({
 });
 export function createController(adapter, onChange = () => {}) {
   const state = {
-    query: {level: '', human: ''},
+    query: {level: '', human: '', limit: 5},
+    limitInput: {draft: '5', error: ''},
+    idInput: {draft: '', error: ''},
     list: {phase: 'loading', data: null},
     detail: {phase: 'idle', data: null},
-    selected: null
+    selected: null,
+    detailSource: null
   };
   let listRequest = 0;
   let detailRequest = 0;
+  // User detail intent is independent of list request order. A late list may
+  // restore its candidate only if no new selection/direct lookup/close occurred.
+  let detailIntent = 0;
+  let listCandidate = null;
   const notify = () => onChange(state);
 
   function close() {
     detailRequest++;
+    detailIntent++;
+    listCandidate = null;
     state.selected = null;
+    state.detailSource = null;
     state.detail = {phase: 'idle', data: null};
     notify();
   }
 
-  async function select(id) {
+  async function select(id, source = 'list') {
+    if (!integer(id) || id <= 0) return;
+    detailIntent++;
+    listCandidate = null;
     const request = ++detailRequest;
     state.selected = id;
+    state.detailSource = source;
     state.detail = {phase: 'loading', data: null};
     notify();
     try {
@@ -99,35 +115,89 @@ export function createController(adapter, onChange = () => {}) {
     notify();
   }
   async function load(query = state.query, initialSelection = null) {
-    const previous = state.selected;
+    const applied = {...state.query, ...query};
+    requireValid(integer(applied.limit) && applied.limit >= 1 && applied.limit <= 100);
+    requireValid(['', 'INFO', 'WARN', 'CRITICAL'].includes(applied.level) && ['', 'true', 'false'].includes(applied.human));
+    let candidate = initialSelection;
+    if (candidate === null) {
+      if (state.detailSource === 'list') candidate = state.selected;
+      else if (listCandidate?.intent === detailIntent) candidate = listCandidate.id;
+    }
+    const intent = detailIntent;
+    listCandidate = candidate === null ? null : {id: candidate, intent};
     const request = ++listRequest;
-    detailRequest++;
-    state.query = {...query};
+    state.query = applied;
     state.list = {phase: 'loading', data: null};
-    state.selected = null;
-    state.detail = {phase: 'idle', data: null};
+    if (state.detailSource !== 'direct') {
+      detailRequest++;
+      state.selected = null;
+      state.detailSource = null;
+      state.detail = {phase: candidate === null ? 'idle' : 'loading', data: null};
+    }
     notify();
     try {
-      const response = await adapter.list({...query});
+      const response = await adapter.list({...applied});
       if (request !== listRequest) return;
-      validateList(response);
+      validateList(response, applied.limit);
       const data = response.alerts;
-      state.list = {phase: 'success', data};
+      state.list = {phase: 'success', data, response};
+      listCandidate = null;
+      if (intent === detailIntent && state.detailSource !== 'direct') {
+        state.detail = {phase: 'idle', data: null};
+        if (candidate !== null && data.some(a => a.alert_id === candidate)) {
+          await select(candidate);
+          return;
+        }
+      }
       notify();
-      const id = initialSelection ?? previous;
-      if (id !== null && data.some(a=>a.alert_id===id)) await select(id);
     } catch (error) {
       if (request !== listRequest) return;
       const phase = error instanceof ResponseDataError ? 'invalid' : 'error';
       state.list = {phase, data: null};
-      state.selected = null;
-      state.detail = {phase: 'idle', data: null};
+      listCandidate = null;
+      if (intent === detailIntent && state.detailSource !== 'direct') {
+        state.selected = null;
+        state.detailSource = null;
+        state.detail = {phase: 'idle', data: null};
+      }
       notify();
     }
   }
+  function setDraft(input, draft) {
+    input.draft = draft;
+    input.error = '';
+    notify();
+  }
+  function positiveInteger(draft) {
+    if (typeof draft !== 'string' || !/^\d+$/.test(draft)) return null;
+    const value = Number(draft);
+    return integer(value) && value > 0 ? value : null;
+  }
+  function applyLimit() {
+    const limit = positiveInteger(state.limitInput.draft);
+    if (limit === null || limit > 100) {
+      state.limitInput.error = '조회 개수는 1~100의 정수로 입력하세요.';
+      notify();
+      return;
+    }
+    state.limitInput.error = '';
+    return load({...state.query, limit});
+  }
+  function lookupId() {
+    const id = positiveInteger(state.idInput.draft);
+    if (id === null) {
+      state.idInput.error = 'Alert ID는 정확하게 표현할 수 있는 양의 정수로 입력하세요.';
+      notify();
+      return;
+    }
+    state.idInput.error = '';
+    return select(id, 'direct');
+  }
   return {
-    state, load, select, close,
+    state, load, select, close, applyLimit, lookupId,
+    setLimitDraft: draft => setDraft(state.limitInput, draft),
+    setIdDraft: draft => setDraft(state.idInput, draft),
     retryList: () => load(),
-    retryDetail: () => select(state.selected)
+    retryDetail: () => select(state.selected, state.detailSource)
   };
 }

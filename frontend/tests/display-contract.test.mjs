@@ -64,7 +64,7 @@ test('wrong signal types reject without silently replacing evidence or scores',(
 });
 test('loading clears old detail; retry recovers a failed request without showing stale data',async()=>{
  const pending=deferred();let calls=0;
- const c=createController({list:async()=>list(original),detail:async id=>{calls++;if(calls===1)return copy(18);if(calls===2)return pending.promise;return copy(id)}});
+ const c=createController({list:async()=>list(original.slice(0,5)),detail:async id=>{calls++;if(calls===1)return copy(18);if(calls===2)return pending.promise;return copy(id)}});
  await c.select(18);const loading=c.select(17);assert.equal(c.state.detail.phase,'loading');assert.equal(c.state.detail.data,null);
  pending.reject(new Error('network'));await loading;assert.equal(c.state.detail.phase,'error');assert.equal(c.state.detail.data,null);
  await c.retryDetail();assert.equal(c.state.detail.data.alert_id,17);
@@ -82,7 +82,7 @@ test('late detail and list replies cannot overwrite the latest selected request'
 });
 test('filters clear excluded selections, preserve included selections, and invalidate in-flight detail',async()=>{
  const pending=deferred();let wait=false;
- const c=createController({list:async q=>list(original.filter(a=>!q.level||a.level===q.level)),detail:id=>wait?pending.promise:Promise.resolve(copy(id))});
+ const c=createController({list:async q=>list(original.filter(a=>!q.level||a.level===q.level).slice(0,q.limit)),detail:id=>wait?pending.promise:Promise.resolve(copy(id))});
  await c.load({level:'',human:''},18);await c.load({level:'CRITICAL',human:''});assert.equal(c.state.detail.data.alert_id,18);
  wait=true;const old=c.select(18);await c.load({level:'WARN',human:''});assert.equal(c.state.selected,null);assert.equal(c.state.detail.phase,'idle');pending.resolve(copy(18));await old;assert.equal(c.state.detail.data,null);
 });

@@ -9,7 +9,9 @@ Object.assign(alert.signals[0],{rule_id:payload,category:payload,reason:payload,
 const original=structuredClone(alert);
 const root={innerHTML:''};
 const document={activeElement:null,getElementById(id){return id==='app'?root:{addEventListener(){}};},querySelectorAll(){return [];}};
-const controller=createDashboard({list:async()=>({...response,alerts:[alert],count:1}),detail:async()=>alert},document);
+const controller=createDashboard({list:async()=>({...response,limit:5,alerts:[alert],count:1}),detail:async()=>alert},document);
 await controller.load(controller.state.query,18);
+controller.setLimitDraft(payload);
+controller.setIdDraft(payload);
 if(JSON.stringify(alert)!==JSON.stringify(original))throw Error('Renderer changed response data');
 console.log(JSON.stringify({payload,html:root.innerHTML,alert}));

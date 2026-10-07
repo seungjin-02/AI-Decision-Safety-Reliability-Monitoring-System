@@ -9,7 +9,7 @@ import * as contract from '../src/display-contract.mjs';
 const read = path => fs.readFileSync(new URL(path,import.meta.url),'utf8');
 const alerts = JSON.parse(read('../fixtures/alerts.json')).alerts;
 const copy = id => structuredClone(alerts.find(a=>a.alert_id===id));
-const list = items => ({count:items.length,limit:6,alerts:items,next_cursor:null});
+const list = items => ({count:items.length,limit:5,alerts:items,next_cursor:null});
 const defer = () => {let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject};};
 function harness(adapter) {
  const root={innerHTML:''},handlers=new Map();

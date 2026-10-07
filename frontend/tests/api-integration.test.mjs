@@ -42,10 +42,10 @@ test('API adapter sends root URLs, limit=5, AND filters and explicit false; retu
   const calls = [];
   const response = {...envelope([copy(17)]), next_cursor: {created_at: copy(17).created_at, alert_id: 17}};
   const adapter = createApiAdapter(async url => {calls.push(url); return json(response);});
-  const result = await adapter.list({level: '', human: ''});
+  const result = await adapter.list({limit: 5, level: '', human: ''});
   assert.deepEqual(result, response);
-  await adapter.list({level: 'WARN', human: 'false'});
-  await adapter.list({level: 'CRITICAL', human: 'true'});
+  await adapter.list({limit: 5, level: 'WARN', human: 'false'});
+  await adapter.list({limit: 5, level: 'CRITICAL', human: 'true'});
   await adapter.detail(231);
   assert.deepEqual(calls, ['/alerts?limit=5', '/alerts?limit=5&level=WARN&human_required=false',
     '/alerts?limit=5&level=CRITICAL&human_required=true', '/alerts/231']);
@@ -55,7 +55,7 @@ test('HTTP errors precede JSON parsing: detail 404 only is AlertNotFound', async
   let bodyReads = 0;
   for (const status of [404, 500]) {
     const adapter = createApiAdapter(async () => ({status, ok: false, json() {bodyReads++; throw Error('body');}}));
-    await assert.rejects(adapter.list({level: '', human: ''}), error =>
+    await assert.rejects(adapter.list({limit: 5, level: '', human: ''}), error =>
       !(error instanceof AlertNotFound) && !(error instanceof ResponseDataError));
     await assert.rejects(adapter.detail(18), error => status === 404
       ? error instanceof AlertNotFound : !(error instanceof ResponseDataError));
@@ -128,7 +128,7 @@ test('controller preserves server order and identity; only mock adapter sorts', 
   const controller = createController(createApiAdapter(async () => json(envelope(unordered))));
   await controller.load();
   assert.deepEqual(controller.state.list.data.map(alert => alert.alert_id), [18, 19, 17]);
-  const mock = await createMockAdapter(envelope(unordered), '', 0).list({level: '', human: ''});
+  const mock = await createMockAdapter(envelope(unordered), '', 0).list({limit: 5, level: '', human: ''});
   const sorted = [...unordered].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.alert_id - a.alert_id);
   assert.deepEqual(mock.alerts, sorted);
   const wrong = createController(createApiAdapter(async () => json(copy(17))));
@@ -157,7 +157,7 @@ test('render handlers send filters, actual clicked id, reset and manual retry th
   assert.equal(controller.state.detail.phase, 'idle');
   assert.ok(view.root.innerHTML.includes('현재 조회 조건에 맞는 Alert가 없습니다.'));
   await view.handlers.get('reset')();
-  assert.deepEqual(controller.state.query, {level: '', human: ''});
+  assert.deepEqual(controller.state.query, {level: '', human: '', limit: 5});
   fail = true;
   await view.handlers.get('human')({target: {value: 'false'}});
   await view.handlers.get('retry-list')();

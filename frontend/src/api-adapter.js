@@ -20,7 +20,7 @@ export function createApiAdapter(fetchRequest = globalThis.fetch) {
 
   return {
     list(query) {
-      const params = new URLSearchParams({limit: '5'});
+      const params = new URLSearchParams({limit: String(query.limit)});
       if (query.level !== '') params.set('level', query.level);
       if (query.human !== '') params.set('human_required', query.human);
       return get(`/alerts?${params}`);

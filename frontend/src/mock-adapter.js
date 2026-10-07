@@ -1,7 +1,7 @@
-import {ResponseDataError, AlertNotFound} from './display-contract.mjs';
+import {ResponseDataError, AlertNotFound, validateList} from './display-contract.mjs';
 
-// These guards cover only fields used for mock lookup/filter/sort operations.
-// The controller owns full list/detail response validation.
+// Lookup guards keep malformed data in the response-data error category.
+// List filtering also uses the shared full validator before excluding records.
 function itemsForOperations(response) {
   if (!response || !Array.isArray(response.alerts) || response.alerts.some(alert =>
     !alert || typeof alert !== 'object' || !Number.isSafeInteger(alert.alert_id) ||
@@ -37,6 +37,9 @@ export function createMockAdapter(fixtureResponse, scenario = '', delayMs = 180)
       if (scenario === 'list-error' && attempt === 1) throw new Error('Preview request failure');
       const result = structuredClone(sample);
       const items = itemsForOperations(result);
+      // Validate the entire fixture before filtering/slicing; an excluded bad
+      // record must not disappear as a normal empty response.
+      validateList(result);
       if (scenario === 'list-invalid') {
         if (items[0]) delete items[0].risk_score;
         else throw new ResponseDataError('Missing preview item');
@@ -46,7 +49,12 @@ export function createMockAdapter(fixtureResponse, scenario = '', delayMs = 180)
         (!query.level || item.level === query.level) &&
         (!query.human || String(item.human_required) === query.human)
       ).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.alert_id - a.alert_id);
+      const more = result.alerts.length > query.limit;
+      result.alerts = result.alerts.slice(0, query.limit);
+      result.limit = query.limit;
       result.count = result.alerts.length;
+      const last = result.alerts.at(-1);
+      result.next_cursor = more && last ? {created_at: last.created_at, alert_id: last.alert_id} : null;
       return result;
     },
     async detail(id) {

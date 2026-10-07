@@ -48,7 +48,27 @@ function filters({level,human}){
     <option value="true" ${human==='true'?'selected':''}>검토 필요</option>
     <option value="false" ${human==='false'?'selected':''}>검토 요구 없음</option>
     </select>${icon('down')}</div>
-    </div>${level||human?'<button class="filter-reset" id="reset">초기화</button>':''}</div>`;
+    </div><button class="filter-reset" id="reset">필터 초기화</button></div>`;
+}
+function queryInputs(state) {
+  const limit = state.limitInput;
+  const limitNote = limit.error || (limit.draft !== String(state.query.limit)
+    ? `미적용 · 현재 요청 개수 ${state.query.limit}건` : '1~100의 정수');
+  const count = state.list.phase === 'success' ? `<span class="page-count">현재 표시 ${state.list.response.count}건</span>` : '';
+  return `<form id="limit-form" class="query-input" novalidate>
+    <label for="limit-input">조회 개수</label>
+    <div class="query-line"><input id="limit-input" type="number" min="1" max="100" step="1" value="${esc(limit.draft)}" aria-describedby="limit-note" aria-invalid="${Boolean(limit.error)}">
+    <button type="submit">조회</button>${count}</div>
+    <p id="limit-note" class="input-note ${limit.error ? 'input-error' : ''}" ${limit.error ? 'role="alert"' : ''}>${esc(limitNote)}</p>
+    </form>`;
+}
+function idInput(state) {
+  return `<form id="id-form" class="query-input direct-query" novalidate>
+    <label for="alert-id">Alert ID</label>
+    <div class="query-line"><input id="alert-id" type="text" inputmode="numeric" autocomplete="off" value="${esc(state.idInput.draft)}" aria-describedby="id-note" aria-invalid="${Boolean(state.idInput.error)}">
+    <button type="submit">상세 조회</button></div>
+    <p id="id-note" class="input-note ${state.idInput.error ? 'input-error' : ''}" ${state.idInput.error ? 'role="alert"' : ''}>${esc(state.idInput.error || '목록 조건과 별도로 양의 정수 ID를 조회합니다.')}</p>
+    </form>`;
 }
 function queue(items,selected){
   return `<div class="master-guide">
@@ -155,11 +175,7 @@ function detail(a) {
     }).join('');
     actions = `<ol class="recommendations">${rows}</ol>`;
   }
-  return `<div class="inspector-head">
-    <span class="selected-label">${icon('list')}평가 상세</span>
-    <button id="close" class="view-action" aria-label="상세 패널 닫기">${icon('close')}</button>
-    </div>
-    <header class="detail-intro">
+  return `<header class="detail-intro">
     <div class="detail-meta">
     <span class="mono">${esc(a.event_id)}</span>
     <span>${timeParts(a).date} ${timeParts(a).time} KST</span>
@@ -195,8 +211,10 @@ export function renderDashboard(state, document, controller, mode = 'mock'){
  const focused=document.activeElement;
  const focusId=focused?.id;
  const focusSelection=focused?.getAttribute('data-select');
+ const caret = focused?.selectionStart;
+ const caretEnd = focused?.selectionEnd;
  const {level, human} = state.query;
- const selected = state.selected;
+ const selected = state.detailSource === 'list' ? state.selected : null;
  let list;
  if (state.list.phase === 'success') {
    list = state.list.data.length
@@ -232,18 +250,29 @@ export function renderDashboard(state, document, controller, mode = 'mock'){
     <div class="list-heading">
     <h1 id="list-title">Alert 목록</h1>
     <span class="sort">${icon('sort')}최신 생성순 · KST</span>
-    </div>${filters(state.query)}</header>${list}<p class="master-foot">${policy}</p>
+    </div>${filters(state.query)}${queryInputs(state)}</header>${list}<p class="master-foot">${policy}</p>
     </section>
-    <aside class="inspector" aria-label="선택한 Alert 상세" aria-busy="${state.detail.phase==='loading'}">${panel}</aside>
+    <aside class="inspector" aria-label="선택한 Alert 상세" aria-busy="${state.detail.phase==='loading'}">${idInput(state)}
+    <div class="inspector-head"><span class="selected-label">${icon('list')}${state.detailSource === 'direct' ? `ID 직접 조회 · Alert #${state.selected}` : '평가 상세'}</span>
+    ${state.detail.phase !== 'idle' ? `<button id="close" class="view-action" aria-label="상세 패널 닫기">${icon('close')}</button>` : ''}</div>${panel}</aside>
     </main>`;
  document.getElementById('level').addEventListener('change',e=>controller.load({level:e.target.value,human}));
  document.getElementById('human').addEventListener('change',e=>controller.load({level,human:e.target.value}));
  document.getElementById('reset')?.addEventListener('click',()=>controller.load({level:'',human:''}));
+ document.getElementById('limit-input').addEventListener('input',e=>controller.setLimitDraft(e.target.value));
+ document.getElementById('alert-id').addEventListener('input',e=>controller.setIdDraft(e.target.value));
+ // Native form submission handles both button and Enter, exactly once.
+ document.getElementById('limit-form').addEventListener('submit',e=>{e.preventDefault();return controller.applyLimit();});
+ document.getElementById('id-form').addEventListener('submit',e=>{e.preventDefault();return controller.lookupId();});
  document.querySelectorAll('[data-select]').forEach(button=>button.addEventListener('click',()=>controller.select(Number(button.dataset.select))));
  document.getElementById('close')?.addEventListener('click',()=>controller.close());
  document.getElementById('retry-list')?.addEventListener('click',()=>controller.retryList());
  document.getElementById('retry-detail')?.addEventListener('click',()=>controller.retryDetail());
- if(focusId)document.getElementById(focusId)?.focus({preventScroll:true});
+ if(focusId) {
+   const target = document.getElementById(focusId);
+   target?.focus({preventScroll:true});
+   if (caret !== null && caret !== undefined && target?.setSelectionRange) target.setSelectionRange(caret, caretEnd);
+ }
  else if(focusSelection)document.querySelector(`[data-select="${focusSelection}"]`)?.focus({preventScroll:true});
 }
 
