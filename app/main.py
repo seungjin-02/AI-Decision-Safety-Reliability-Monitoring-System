@@ -229,9 +229,7 @@ def get_alerts_endpoint(search_query: Annotated[AlertSearchQuery, Query()], repo
         next_cursor=next_cursor,
     )
 
-
 async def dashboard_files(scope, receive, send):
-    # Build availability is checked per request, so API startup needs no dist.
     if not (DASHBOARD_PATH / "index.html").is_file():
         response = PlainTextResponse(
             "대시보드가 준비되지 않았습니다. python frontend/build_web.py로 빌드하세요.",
@@ -240,6 +238,5 @@ async def dashboard_files(scope, receive, send):
     else:
         response = StaticFiles(directory=DASHBOARD_PATH, html=True)
     await response(scope, receive, send)
-
 
 app.mount("/dashboard", dashboard_files, name="dashboard")

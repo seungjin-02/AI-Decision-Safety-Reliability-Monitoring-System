@@ -1,11 +1,9 @@
-"""Dependency-free static build from frontend sources. No legacy rewriting."""
 import json
 from pathlib import Path
 
 FILES = ('index.html','app.js','entry.js','api-adapter.js','mock-adapter.js','display-contract.js','styles.css')
 
 def inline_json(value):
-    # Escape raw-text HTML delimiters while preserving JSON.parse output.
     return (json.dumps(value, ensure_ascii=False, allow_nan=False)
             .replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
             .replace('\u2028', '\\u2028').replace('\u2029', '\\u2029'))
