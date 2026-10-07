@@ -1,6 +1,6 @@
 """Seed a NEW isolated demo via real HTTP, then compare GET output and core.
 
-Run only against frontend/demo_server.py with an empty demo DB.
+Run only against c2_dashboard_local.py --db <new-isolated-db> with an empty demo DB.
 This validates HTTP contracts, not browser rendering.
 """
 import argparse
@@ -94,7 +94,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     database = args.db.resolve()
     if database == (ROOT / 'data' / 'alerts.db').resolve() or not database.is_file():
-        parser.error('Use the new demo DB started by frontend/demo_server.py')
+        parser.error('Use the new demo DB started by c2_dashboard_local.py --db <new-isolated-db>')
     result = run(f'http://127.0.0.1:{args.port}', database)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print('PASS: empty/seeded DB, six POST -> GET -> core comparisons, GET exposure contract, order/cursor, filters/reset, 404')

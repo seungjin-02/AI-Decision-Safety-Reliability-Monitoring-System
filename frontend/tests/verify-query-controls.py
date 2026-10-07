@@ -104,7 +104,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     database = args.db.resolve()
     if database == (ROOT / 'data/alerts.db').resolve() or not database.is_file():
-        parser.error('Use the new empty demo DB started by frontend/demo_server.py')
+        parser.error('Use the new empty demo DB started by c2_dashboard_local.py --db <new-isolated-db>')
     result = run(f'http://127.0.0.1:{args.port}', database)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print('PASS: 120 POST/GET/core comparisons; 48 filter/limit/order/count/cursor combinations; limit=100 returns 100; outside-page target; detail 404; DB rows retained')

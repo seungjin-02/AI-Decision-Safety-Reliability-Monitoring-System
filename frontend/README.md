@@ -13,18 +13,23 @@ FastAPI와 화면이 같은 출처에서 동작한다. 기존 C2 배치와 Day5 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-python frontend/build_web.py
 ```
 
-시연은 **새 격리 DB**로 실행한다. 아래 서버는 기존 파일과 기본 `data/alerts.db` 경로를 거부한다. 경로가 이미 있으면 다른 새 경로를 지정한다.
+로컬 실행은 프로젝트 루트의 `c2_dashboard_local.py` 하나로 통합했다. PyCharm에서 이 파일을 실행하거나 저장소 루트에서 다음 명령을 사용한다. 화면 빌드는 자동으로 수행한다. PyCharm 실행 설정은 `.run/c2_dashboard_local.run.xml`에 저장하며 프로젝트 인터프리터, 루트 작업 폴더, 빈 매개변수를 사용한다.
 
 ```powershell
-.\.venv\Scripts\python.exe frontend/demo_server.py --db ../day8-demo-new/alerts.db --port 8001
+.\.venv\Scripts\python.exe c2_dashboard_local.py
 ```
 
-[API 화면](http://127.0.0.1:8001/dashboard/)과 [예시 화면](http://127.0.0.1:8001/dashboard/?mode=mock)을 연다. 서버는 Ctrl+C로 종료한다. 시작 로그의 `DEMO_DATABASE_PATH`로 실제 DB 경로를 확인한다. 시연 DB는 종료 후에도 남으며 자동 삭제되지 않는다. 포트가 점유되어 있으면 `--port 8002`처럼 다른 포트를 지정하고 URL·검증 명령도 함께 바꾼다. 기존 DB 파일을 재사용하려고 삭제하지 말고 새 시연 경로를 지정한다.
+기본값은 격리 시연 DB `data/c2-demo.db`, 포트 8000이다. 현재 로컬 시연 DB에는 검증된 120건이 들어 있다. DB는 Git에 포함하지 않는다. 기본 시연 DB가 없으면 오류로 종료하며 자동으로 빈 DB로 대체하지 않는다. [API 화면](http://127.0.0.1:8000/dashboard/)에서 목록과 상세를 조회한다. `?mode=mock`은 명시적 예시 모드다. PyCharm의 정지 버튼 또는 Ctrl+C로 종료한다.
 
-별도 프론트 서버나 CORS 설정은 없다. 기존 백엔드 실행 환경에서는 `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`도 사용할 수 있다. 이 명령은 기본 `data/alerts.db`를 사용하므로 위 격리 시연과 구분한다.
+검증을 위해 새 빈 격리 DB가 필요할 때만 경로를 명시한다. 새 경로는 FastAPI 기동 시 초기화하며 기존 격리 DB를 지정하면 재사용한다. 데이터 입력은 아래 검증 스크립트가 별도로 수행한다.
+
+```powershell
+.\.venv\Scripts\python.exe c2_dashboard_local.py --db ../day8-demo-new/alerts.db --port 8001
+```
+
+런처는 기존 사용자 DB `data/alerts.db`를 거부한다. 기존 사용자 DB를 사용하는 원래 백엔드 실행 명령은 `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`이며, 격리 시연 실행과 구분한다. 포트가 점유돼 있으면 기존 서버를 종료하거나 `--port 8002`를 지정한다. 기존 DB를 삭제해 포트 충돌을 해결하지 않는다. 별도 프론트 서버나 CORS 설정은 없다.
 
 다른 터미널에서 새 시연 DB가 비어 있을 때만, 실제 POST/GET·core 비교를 실행한다. Day8 스크립트는 비민감 예시 120건을 생성해 48개 필터·limit 조합과 실제 100건 반환을 대조한다. 대시보드에는 POST 기능이 없다. 기존 `verify-local-api.py`의 6건 검증은 다른 빈 시연 DB에서 별도로 실행할 수 있다.
 
@@ -40,6 +45,7 @@ node --test --test-isolation=none frontend/tests/display-contract.test.mjs front
 python -B frontend/tests/output-safety.test.py
 python -B frontend/tests/verify-core-examples.py
 Get-ChildItem frontend/dist/*.js | ForEach-Object { node --check $_.FullName }
+.\.venv\Scripts\python.exe -m pytest -q frontend/tests/test_local_launcher.py tests/API_Test/test_dashboard.py
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
@@ -60,4 +66,4 @@ mock은 공유 validator로 전체 fixture를 확인한 뒤 필터·정렬·limi
 
 **dist는 Git 제외 생성물이다. 직접 수정하지 않는다.** build_web.py는 원본과 fixture만으로 실행 파일 7개를 만든다. FastAPI는 `frontend/dist/`만 `/dashboard/`에 제공한다. dist/index.html이 없으면 대시보드는 503과 빌드 안내를 표시하지만 기존 API의 import와 기동은 유지한다. `/docs`와 루트 GET 경로를 가리지 않는다.
 
-Day8 구현·검증 결과와 범위 구분은 `DAY8-REVIEW.md`에 있다. Day9 더보기·커서 탐색·누적 목록은 별도 작업이며 이번 화면에는 추가하지 않았다.
+Day9 더보기·커서 탐색·누적 목록은 별도 작업이며 이번 화면에는 추가하지 않았다.
