@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {validateAlert,validateList,ResponseDataError,PreviewNotFound,signalReason,summaryFor,evidenceValues,createController} from '../src/display-contract.mjs';
+import {validateAlert,validateList,ResponseDataError,AlertNotFound,signalReason,summaryFor,evidenceValues,createController} from '../src/display-contract.mjs';
 const response=JSON.parse(fs.readFileSync(new URL('../fixtures/alerts.json',import.meta.url),'utf8'));
 const original=response.alerts;
 const infoExample=original.find(a=>a.alert_id===19);
@@ -64,13 +64,13 @@ test('wrong signal types reject without silently replacing evidence or scores',(
 });
 test('loading clears old detail; retry recovers a failed request without showing stale data',async()=>{
  const pending=deferred();let calls=0;
- const c=createController({list:async()=>list(original),detail:async id=>{calls++;if(calls===1)return copy(18);if(calls===2)return pending.promise;return copy(id)}});
+ const c=createController({list:async()=>list(original.slice(0,5)),detail:async id=>{calls++;if(calls===1)return copy(18);if(calls===2)return pending.promise;return copy(id)}});
  await c.select(18);const loading=c.select(17);assert.equal(c.state.detail.phase,'loading');assert.equal(c.state.detail.data,null);
  pending.reject(new Error('network'));await loading;assert.equal(c.state.detail.phase,'error');assert.equal(c.state.detail.data,null);
  await c.retryDetail();assert.equal(c.state.detail.data.alert_id,17);
 });
 test('detail 404, invalid fields and mismatched alert identity are not normal results',async()=>{
- const notFound=createController({detail:async()=>{throw new PreviewNotFound()}});await notFound.select(18);assert.equal(notFound.state.detail.phase,'notfound');
+ const notFound=createController({detail:async()=>{throw new AlertNotFound()}});await notFound.select(18);assert.equal(notFound.state.detail.phase,'notfound');
  const bad=copy(18);delete bad.human_required;const invalid=createController({detail:async()=>bad});await invalid.select(18);assert.equal(invalid.state.detail.phase,'invalid');assert.equal(invalid.state.detail.data,null);
  const mismatch=createController({detail:async()=>copy(17)});await mismatch.select(18);assert.equal(mismatch.state.detail.phase,'invalid');
 });
@@ -82,7 +82,7 @@ test('late detail and list replies cannot overwrite the latest selected request'
 });
 test('filters clear excluded selections, preserve included selections, and invalidate in-flight detail',async()=>{
  const pending=deferred();let wait=false;
- const c=createController({list:async q=>list(original.filter(a=>!q.level||a.level===q.level)),detail:id=>wait?pending.promise:Promise.resolve(copy(id))});
+ const c=createController({list:async q=>list(original.filter(a=>!q.level||a.level===q.level).slice(0,q.limit)),detail:id=>wait?pending.promise:Promise.resolve(copy(id))});
  await c.load({level:'',human:''},18);await c.load({level:'CRITICAL',human:''});assert.equal(c.state.detail.data.alert_id,18);
  wait=true;const old=c.select(18);await c.load({level:'WARN',human:''});assert.equal(c.state.selected,null);assert.equal(c.state.detail.phase,'idle');pending.resolve(copy(18));await old;assert.equal(c.state.detail.data,null);
 });

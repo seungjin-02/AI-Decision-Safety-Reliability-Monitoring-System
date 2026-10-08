@@ -42,9 +42,12 @@ class OutputSafety(unittest.TestCase):
         self.assertFalse(any(key.startswith('on') or key=='data-injected' for _,attrs in parsed.tags for key in attrs))
         payload=self.case['payload']
         self.assertIn(payload,parsed.text)  # entity decoding preserves original text
-        self.assertIn(('article',{'class':'inbox-row selected','aria-label':payload}),parsed.tags)
+        self.assertIn(('article',{'id':'row-18','class':'inbox-row selected','aria-label':payload}),parsed.tags)
         buttons=[attrs for tag,attrs in parsed.tags if tag=='button' and 'data-select' in attrs]
         self.assertEqual(buttons[0]['aria-label'],payload+' 상세 보기')
+        inputs={attrs['id']:attrs for tag,attrs in parsed.tags if tag=='input'}
+        self.assertEqual(inputs['limit-input']['value'],payload)
+        self.assertEqual(inputs['alert-id']['value'],payload)
         self.assertGreaterEqual(parsed.text.count(payload),7)  # ids, raw reasons, evidence and action code
     def test_script_json_preserves_values_without_terminating_script(self):
         response=json.loads((FRONT/'fixtures/alerts.json').read_text(encoding='utf-8'))

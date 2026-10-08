@@ -5,7 +5,8 @@ from time import perf_counter
 
 from fastapi import FastAPI, Request, Depends, Query, status
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.encoders import jsonable_encoder
 
 from app.db.alert_repository import AlertRepository, PersistenceError
@@ -18,6 +19,7 @@ from app.schemas import AlertDetailResponse, AlertListResponse, AlertSearchQuery
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATABASE_PATH = PROJECT_ROOT / "data" / "alerts.db"
+DASHBOARD_PATH = PROJECT_ROOT / "frontend" / "dist"
 
 def get_alert_repository() -> AlertRepository:
     return AlertRepository(DATABASE_PATH)
@@ -203,6 +205,7 @@ def get_alerts_endpoint(search_query: Annotated[AlertSearchQuery, Query()], repo
         created_to=search_query.created_to,
         cursor_created_at=search_query.cursor_created_at,
         cursor_alert_id=search_query.cursor_alert_id,
+        sort_order=search_query.sort_order,
     )
 
     has_next_page = len(fetched_details) > requested_limit
@@ -226,3 +229,15 @@ def get_alerts_endpoint(search_query: Annotated[AlertSearchQuery, Query()], repo
         alerts=alerts,
         next_cursor=next_cursor,
     )
+
+async def dashboard_files(scope, receive, send):
+    if not (DASHBOARD_PATH / "index.html").is_file():
+        response = PlainTextResponse(
+            "대시보드가 준비되지 않았습니다. python frontend/build_web.py로 빌드하세요.",
+            status_code=503,
+        )
+    else:
+        response = StaticFiles(directory=DASHBOARD_PATH, html=True)
+    await response(scope, receive, send)
+
+app.mount("/dashboard", dashboard_files, name="dashboard")

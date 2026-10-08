@@ -284,11 +284,18 @@ class AlertRepository:
             created_from: datetime | None = None,
             created_to: datetime | None = None,
             cursor_created_at: datetime | None = None,
-            cursor_alert_id: int | None = None
+            cursor_alert_id: int | None = None,
+            sort_order: str = "desc",
     ) -> list[AlertDetail]:
 
         if not 1 <= limit <= 101:
             raise ValueError("limit must be between 1 and 101")
+
+        if sort_order not in {"desc", "asc"}:
+            raise ValueError("sort_order must be desc or asc")
+
+        direction = "DESC" if sort_order == "desc" else "ASC"
+        cursor_operator = "<" if sort_order == "desc" else ">"
 
         if level is not None and level not in {"INFO", "WARN", "CRITICAL"}:
             raise ValueError("level must be INFO, WARN, CRITICAL")
@@ -352,9 +359,10 @@ class AlertRepository:
 
         if cursor_created_at_utc is not None and cursor_alert_id is not None:
             conditions.append(
-                """
+                f"""
                 (
-                    created_at < ? OR (created_at = ? AND alert_id < ?)
+                    created_at {cursor_operator} ? OR
+                    (created_at = ? AND alert_id {cursor_operator} ?)
                 )
                 """
             )
@@ -392,7 +400,7 @@ class AlertRepository:
                     created_at
                 FROM alerts
                 {where_clause}
-                ORDER BY created_at DESC, alert_id DESC
+                ORDER BY created_at {direction}, alert_id {direction}
                 LIMIT ?
                 """,
                 values,

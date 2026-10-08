@@ -1,12 +1,25 @@
 import {createDashboard} from './app.js';
 import {createMockAdapter} from './mock-adapter.js';
+import {createApiAdapter} from './api-adapter.js';
 
-let response;
-try {
-  response=JSON.parse(document.getElementById('fixtures').textContent);
-} catch {
-  // An invalid response is handled by the controller, never replaced with [].
+export function startDashboard(document, location, fetchRequest = globalThis.fetch) {
+  const params = new URLSearchParams(location.search);
+  const mode = params.get('mode') === 'mock' ? 'mock' : 'api';
+  let adapter;
+  if (mode === 'mock') {
+    let response;
+    try {
+      response = JSON.parse(document.getElementById('fixtures').textContent);
+    } catch {
+      // Leave malformed fixtures for controller validation; never default to [].
+    }
+    adapter = createMockAdapter(response, params.get('preview') || '');
+  } else {
+    adapter = createApiAdapter(fetchRequest);
+  }
+  const controller = createDashboard(adapter, document, mode);
+  const ready = controller.load(controller.state.query, mode === 'mock' ? 18 : null);
+  return {controller, ready};
 }
-const scenario=new URLSearchParams(location.search).get('preview')||'';
-const controller=createDashboard(createMockAdapter(response,scenario),document);
-controller.load(controller.state.query,18);
+
+if (typeof document !== 'undefined') startDashboard(document, location);

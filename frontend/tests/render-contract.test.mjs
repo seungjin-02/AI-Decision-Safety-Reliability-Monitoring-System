@@ -9,18 +9,12 @@ import * as contract from '../src/display-contract.mjs';
 const read = path => fs.readFileSync(new URL(path,import.meta.url),'utf8');
 const alerts = JSON.parse(read('../fixtures/alerts.json')).alerts;
 const copy = id => structuredClone(alerts.find(a=>a.alert_id===id));
-const list = items => ({count:items.length,limit:6,alerts:items,next_cursor:null});
+const list = items => ({count:items.length,limit:5,alerts:items,next_cursor:null});
 const defer = () => {let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject};};
+import {documentSink} from './dom-sink.mjs';
 function harness(adapter) {
- const root={innerHTML:''},handlers=new Map();
- const document={activeElement:null,getElementById(id){
-  if(id==='app')return root;
-  if(id==='fixtures')return {textContent:JSON.stringify(list(alerts))};
-  if(!root.innerHTML.includes(`id="${id}"`))return null;
-  return {addEventListener:(_,fn)=>handlers.set(id,fn),focus(){}};
- },querySelectorAll(){return [];}};
- const controller=createDashboard(adapter,document);
- return {controller,html:()=>root.innerHTML,panel:()=>root.innerHTML.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1]??'',click:id=>{assert.ok(handlers.has(id));return handlers.get(id)();}};
+ const sink=documentSink();const controller=createDashboard(adapter,sink.document);
+ return {controller,html:()=>sink.root.innerHTML,panel:()=>sink.root.innerHTML.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1]??'',click:id=>sink.event(id,'click')};
 }
 const actions = html => [...html.matchAll(/<code class="action-code">([^<]*)<\/code>/g)].map(m=>m[1]);
 const scores = html => [...html.matchAll(/<div class="score-value">([^<]*)<\/div>/g)].map(m=>Number(m[1]));
@@ -52,7 +46,7 @@ test('real render branches distinguish empty/error/404/invalid and wire retry bu
  await failed.controller.load();assert.ok(failed.html().includes(expected.error));assert.ok(failed.html().includes('id="retry-list"'));assert.ok(!failed.html().includes(expected.empty));
  await failed.click('retry-list');assert.ok(failed.html().includes(expected.empty));
  for(const phase of ['error','notfound','invalid']){
-  let attempt=0;const h=harness({detail:async id=>{if(++attempt===1){if(phase==='notfound')throw new contract.PreviewNotFound();if(phase==='error')throw Error('network');const bad=copy(id);delete bad.human_required;return bad;}return copy(id);}});
+  let attempt=0;const h=harness({detail:async id=>{if(++attempt===1){if(phase==='notfound')throw new contract.AlertNotFound();if(phase==='error')throw Error('network');const bad=copy(id);delete bad.human_required;return bad;}return copy(id);}});
   await h.controller.select(18);assert.ok(h.panel().includes(expected[phase]));assert.ok(!h.panel().includes('class="detail-intro"'));
   assert.equal(h.panel().includes('id="retry-detail"'),phase==='error');
   if(phase==='error'){await h.click('retry-detail');assert.ok(h.panel().includes('evt_review_018'));}
@@ -66,7 +60,7 @@ test('switching from a successful detail immediately renders loading then failur
   const request=h.controller.select(17);
   assert.ok(h.panel().includes('Alert를 불러오는 중입니다.'));assert.ok(!h.panel().includes('evt_review_018'));assert.deepEqual(scores(h.panel()),[]);
   if(phase==='invalid'){const bad=copy(17);bad.risk_score='3';pending.resolve(bad);}
-  else pending.reject(phase==='notfound'?new contract.PreviewNotFound():Error('network'));
+  else pending.reject(phase==='notfound'?new contract.AlertNotFound():Error('network'));
   await request;assert.ok(h.panel().includes(contract.statusText[phase]));assert.ok(!h.panel().includes('evt_review_018'));assert.deepEqual(actions(h.panel()),[]);
  }
 });

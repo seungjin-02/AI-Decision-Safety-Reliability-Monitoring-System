@@ -76,9 +76,12 @@ core 평가 함수가 담당하는 일:
 | 조회 조건 | 의미 |
 |---|---|
 | `limit` | 한 페이지 건수, 기본 5, 허용 범위 1~100 |
+| `sort_order` | `desc` 기본 또는 `asc`; 다른 값은 422 |
 | `level`, `human_required` | 위험 수준과 인간 검토 필요 여부로 필터 |
 | `created_from`, `created_to` | 시간대가 포함된 생성 시각 범위 (`created_from < created_to`) |
 | `cursor_created_at`, `cursor_alert_id` | 다음 페이지 요청 시 두 값을 함께 제공 |
+
+정렬은 필터 적용 후 LIMIT 전에 `(created_at, alert_id)`를 desc 또는 asc로 적용한다. 커서는 같은 순서에서 desc는 작은 시각·ID, asc는 큰 시각·ID만 조회한다. 날짜는 Alert 저장 시각의 `created_from ≤ created_at < created_to`이며 한쪽 경계만 전달할 수 있다. 커서 탐색은 고정 스냅샷이 아니다.
 
 `200` 목록 응답의 최상위 필드는 `count`, `limit`, `alerts`, `next_cursor`다. `alerts`의 각 항목은 `alert_id`, 생성 요청의 `trace_id`, `created_at`, 평가 결과를 포함한다. 다음 페이지가 있으면 `next_cursor`의 `created_at`, `alert_id`를 다음 요청의 두 `cursor_` 조건에 넣는다. 마지막 페이지의 `next_cursor`는 `null`이다. 잘못된 조건에는 `422 api_validation_error`를 반환한다.
 
