@@ -11,16 +11,10 @@ const alerts = JSON.parse(read('../fixtures/alerts.json')).alerts;
 const copy = id => structuredClone(alerts.find(a=>a.alert_id===id));
 const list = items => ({count:items.length,limit:5,alerts:items,next_cursor:null});
 const defer = () => {let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject};};
+import {documentSink} from './dom-sink.mjs';
 function harness(adapter) {
- const root={innerHTML:''},handlers=new Map();
- const document={activeElement:null,getElementById(id){
-  if(id==='app')return root;
-  if(id==='fixtures')return {textContent:JSON.stringify(list(alerts))};
-  if(!root.innerHTML.includes(`id="${id}"`))return null;
-  return {addEventListener:(_,fn)=>handlers.set(id,fn),focus(){}};
- },querySelectorAll(){return [];}};
- const controller=createDashboard(adapter,document);
- return {controller,html:()=>root.innerHTML,panel:()=>root.innerHTML.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1]??'',click:id=>{assert.ok(handlers.has(id));return handlers.get(id)();}};
+ const sink=documentSink();const controller=createDashboard(adapter,sink.document);
+ return {controller,html:()=>sink.root.innerHTML,panel:()=>sink.root.innerHTML.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1]??'',click:id=>sink.event(id,'click')};
 }
 const actions = html => [...html.matchAll(/<code class="action-code">([^<]*)<\/code>/g)].map(m=>m[1]);
 const scores = html => [...html.matchAll(/<div class="score-value">([^<]*)<\/div>/g)].map(m=>Number(m[1]));

@@ -12,31 +12,8 @@ const copy = id => structuredClone(fixture.alerts.find(alert => alert.alert_id =
 const envelope = alerts => ({count: alerts.length, limit: 5, alerts, next_cursor: null});
 const json = value => new Response(JSON.stringify(value), {status: 200});
 
-function documentSink(fixtureText = JSON.stringify(fixture)) {
-  const root = {innerHTML: ''};
-  const handlers = new Map();
-  let fixtureReads = 0;
-  const document = {
-    activeElement: null,
-    getElementById(id) {
-      if (id === 'app') return root;
-      if (id === 'fixtures') {
-        fixtureReads++;
-        if (fixtureText === null) throw Error('No mock data in API mode');
-        return {textContent: fixtureText};
-      }
-      if (!root.innerHTML.includes(`id="${id}"`)) return null;
-      return {addEventListener: (_, handler) => handlers.set(id, handler), focus() {}};
-    },
-    querySelectorAll() {
-      return [...root.innerHTML.matchAll(/data-select="(\d+)"/g)].map(match => ({
-        dataset: {select: match[1]},
-        addEventListener: (_, handler) => handlers.set(`select-${match[1]}`, handler)
-      }));
-    }
-  };
-  return {document, root, handlers, fixtureReads: () => fixtureReads};
-}
+import {documentSink as sink} from './dom-sink.mjs';
+const documentSink=(text=JSON.stringify(fixture))=>sink(text);
 
 test('API adapter sends root URLs, limit=5, AND filters and explicit false; returns full envelope', async () => {
   const calls = [];
@@ -47,8 +24,8 @@ test('API adapter sends root URLs, limit=5, AND filters and explicit false; retu
   await adapter.list({limit: 5, level: 'WARN', human: 'false'});
   await adapter.list({limit: 5, level: 'CRITICAL', human: 'true'});
   await adapter.detail(231);
-  assert.deepEqual(calls, ['/alerts?limit=5', '/alerts?limit=5&level=WARN&human_required=false',
-    '/alerts?limit=5&level=CRITICAL&human_required=true', '/alerts/231']);
+  assert.deepEqual(calls, ['/alerts?limit=5&sort_order=desc', '/alerts?limit=5&level=WARN&human_required=false&sort_order=desc',
+    '/alerts?limit=5&level=CRITICAL&human_required=true&sort_order=desc', '/alerts/231']);
 });
 
 test('HTTP errors precede JSON parsing: detail 404 only is AlertNotFound', async () => {
@@ -97,7 +74,7 @@ test('API mode ignores preview and never reads fixtures, auto-selects 18 or fall
     calls.push(url); return json(envelope([copy(18)]));
   });
   await run.ready;
-  assert.deepEqual(calls, ['/alerts?limit=5']);
+  assert.deepEqual(calls, ['/alerts?limit=5&sort_order=desc']);
   assert.equal(run.controller.state.detail.phase, 'idle');
   assert.ok(view.root.innerHTML.includes('로컬 API 연결'));
   assert.ok(view.root.innerHTML.includes('evt_review_018'));
@@ -124,12 +101,12 @@ test('explicit mock mode applies preview and starts with mock selection only', a
 });
 
 test('controller preserves server order and identity; only mock adapter sorts', async () => {
-  const unordered = [copy(18), copy(19), copy(17)];
-  const controller = createController(createApiAdapter(async () => json(envelope(unordered))));
+  const ordered = [copy(19), copy(18), copy(17)];
+  const controller = createController(createApiAdapter(async () => json(envelope(ordered))));
   await controller.load();
-  assert.deepEqual(controller.state.list.data.map(alert => alert.alert_id), [18, 19, 17]);
-  const mock = await createMockAdapter(envelope(unordered), '', 0).list({limit: 5, level: '', human: ''});
-  const sorted = [...unordered].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.alert_id - a.alert_id);
+  assert.deepEqual(controller.state.list.data.map(alert => alert.alert_id), [19, 18, 17]);
+  const mock = await createMockAdapter(envelope(ordered), '', 0).list({limit: 5, level: '', human: ''});
+  const sorted = [...ordered].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.alert_id - a.alert_id);
   assert.deepEqual(mock.alerts, sorted);
   const wrong = createController(createApiAdapter(async () => json(copy(17))));
   await wrong.select(18);
@@ -151,17 +128,17 @@ test('render handlers send filters, actual clicked id, reset and manual retry th
   await controller.load();
   await view.handlers.get('select-17')();
   assert.equal(controller.state.detail.data.alert_id, 17);
-  await view.handlers.get('human')({target: {value: 'false'}});
-  assert.ok(calls.includes('/alerts?limit=5&human_required=false'));
-  await view.handlers.get('level')({target: {value: 'CRITICAL'}});
+  await view.handlers.get('human')({target: {value: 'false'}}); await view.event('query-form','submit');
+  assert.ok(calls.includes('/alerts?limit=5&human_required=false&sort_order=desc'));
+  await view.handlers.get('level')({target: {value: 'CRITICAL'}}); await view.event('query-form','submit');
   assert.equal(controller.state.detail.phase, 'idle');
   assert.ok(view.root.innerHTML.includes('현재 조회 조건에 맞는 Alert가 없습니다.'));
   await view.handlers.get('reset')();
-  assert.deepEqual(controller.state.query, {level: '', human: '', limit: 5});
+  assert.equal(controller.state.draft.level,'');assert.equal(controller.state.query.level,'CRITICAL');
   fail = true;
-  await view.handlers.get('human')({target: {value: 'false'}});
+  await view.handlers.get('human')({target: {value: 'false'}}); await view.event('query-form','submit');
   await view.handlers.get('retry-list')();
-  assert.deepEqual(calls.slice(-2), ['/alerts?limit=5&human_required=false', '/alerts?limit=5&human_required=false']);
+  assert.deepEqual(calls.slice(-2), ['/alerts?limit=5&human_required=false&sort_order=desc', '/alerts?limit=5&human_required=false&sort_order=desc']);
 });
 
 test('API detail transition clears previous data while loading, then renders 404/500/invalid', async () => {

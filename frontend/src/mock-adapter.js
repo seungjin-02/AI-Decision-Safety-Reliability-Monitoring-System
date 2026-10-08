@@ -1,4 +1,4 @@
-import {ResponseDataError, AlertNotFound, validateList} from './display-contract.mjs';
+import {ResponseDataError, AlertNotFound, validateList, compareKeys, timestamp} from './display-contract.mjs';
 
 // Lookup guards keep malformed data in the response-data error category.
 // List filtering also uses the shared full validator before excluding records.
@@ -47,8 +47,11 @@ export function createMockAdapter(fixtureResponse, scenario = '', delayMs = 180)
       }
       result.alerts = scenario === 'list-empty' ? [] : items.filter(item =>
         (!query.level || item.level === query.level) &&
-        (!query.human || String(item.human_required) === query.human)
-      ).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.alert_id - a.alert_id);
+        (!query.human || String(item.human_required) === query.human) &&
+        (!query.created_from || timestamp(item.created_at) >= timestamp(query.created_from)) &&
+        (!query.created_to || timestamp(item.created_at) < timestamp(query.created_to)) &&
+        (!query.cursor_created_at || compareKeys(item, {created_at: query.cursor_created_at, alert_id: query.cursor_alert_id}) * (query.sort_order === 'asc' ? 1 : -1) > 0)
+      ).sort((a, b) => compareKeys(a, b) * (query.sort_order === 'asc' ? 1 : -1));
       const more = result.alerts.length > query.limit;
       result.alerts = result.alerts.slice(0, query.limit);
       result.limit = query.limit;

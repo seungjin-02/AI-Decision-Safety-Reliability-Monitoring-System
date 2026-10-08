@@ -61,6 +61,7 @@ class EvaluateResponse(BaseModel):
 
 class AlertSearchQuery(BaseModel):
     limit: int = Field(default=5, ge=1, le=100)
+    sort_order: Literal["desc", "asc"] = "desc"
     level: Literal["INFO", "WARN", "CRITICAL"] | None = None
     human_required: bool | None = None
     created_from: AwareDatetime | None = None

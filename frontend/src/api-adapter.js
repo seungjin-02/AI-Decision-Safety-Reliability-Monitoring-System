@@ -23,6 +23,10 @@ export function createApiAdapter(fetchRequest = globalThis.fetch) {
       const params = new URLSearchParams({limit: String(query.limit)});
       if (query.level !== '') params.set('level', query.level);
       if (query.human !== '') params.set('human_required', query.human);
+      params.set('sort_order', query.sort_order || 'desc');
+      for (const name of ['created_from', 'created_to', 'cursor_created_at', 'cursor_alert_id']) {
+        if (query[name] !== undefined && query[name] !== '') params.set(name, String(query[name]));
+      }
       return get(`/alerts?${params}`);
     },
     detail(id) {

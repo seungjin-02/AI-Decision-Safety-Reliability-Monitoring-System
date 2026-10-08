@@ -12,23 +12,10 @@ const envelope = (alerts = [], limit = 5) => ({count: alerts.length, limit, aler
 const json = value => new Response(JSON.stringify(value));
 const defer = () => {let resolve, reject; const promise = new Promise((a,b) => {resolve=a; reject=b;}); return {promise, resolve, reject};};
 
-// A DOM sink exercises actual render/event handlers, separately from browser QA.
+import {documentSink} from './dom-sink.mjs';
 function view(adapter) {
-  const root = {innerHTML: ''}, handlers = new Map();
-  const document = {activeElement: null, getElementById(id) {
-    if (id === 'app') return root;
-    if (!root.innerHTML.includes(`id="${id}"`)) return null;
-    return {addEventListener: (type, fn) => handlers.set(`${id}:${type}`, fn), focus() {}};
-  }, querySelectorAll() {
-    return [...root.innerHTML.matchAll(/data-select="(\d+)"/g)].map(m => ({dataset:{select:m[1]},
-      addEventListener: (type, fn) => handlers.set(`select-${m[1]}:${type}`, fn)}));
-  }};
-  const controller = createDashboard(adapter, document, 'api');
-  return {controller, html: () => root.innerHTML,
-    event(id, type, value) {
-      const fn = handlers.get(`${id}:${type}`); assert.ok(fn, `${id}:${type}`);
-      return fn({target:{value}, preventDefault() {}});
-    }};
+  const sink=documentSink();
+  return {...sink,controller:createDashboard(adapter,sink.document,'api'),html:()=>sink.root.innerHTML};
 }
 
 test('default 5 and valid 1/37/100 pass through controller, adapter and renderer', async () => {
@@ -43,11 +30,11 @@ test('default 5 and valid 1/37/100 pass through controller, adapter and renderer
     await h.event('limit-input', 'input', value);
     assert.equal(calls.length, ['1','37','100'].indexOf(value)+1, 'typing makes no request');
     assert.ok(h.html().includes('미적용'));
-    await h.event('limit-form', 'submit');
+    await h.event('query-form', 'submit');
     assert.equal(h.controller.state.query.limit, Number(value));
-    assert.ok(h.html().includes('현재 표시 1건'));
+    assert.ok(h.html().includes('현재 불러온 1건'));
   }
-  assert.deepEqual(calls, ['/alerts?limit=5','/alerts?limit=1','/alerts?limit=37','/alerts?limit=100']);
+  assert.deepEqual(calls, ['/alerts?limit=5&sort_order=desc','/alerts?limit=1&sort_order=desc','/alerts?limit=37&sort_order=desc','/alerts?limit=100&sort_order=desc']);
 });
 
 test('invalid limit strings make no request and preserve list/detail/applied value', async () => {
@@ -56,52 +43,48 @@ test('invalid limit strings make no request and preserve list/detail/applied val
   await h.controller.load(); await h.controller.select(18);
   const data=h.controller.state.list.data, detail=h.controller.state.detail.data;
   for (const value of ['', '0','-1','101','1.5','word','5x','1e2','9007199254740993']) {
-    h.event('limit-input','input',value); await h.event('limit-form','submit');
+    h.event('limit-input','input',value); await h.event('query-form','submit');
     assert.equal(calls,1); assert.equal(h.controller.state.query.limit,5);
     assert.equal(h.controller.state.list.data,data); assert.equal(h.controller.state.detail.data,detail);
     assert.ok(h.html().includes('조회 개수는 1~100의 정수로 입력하세요.'));
-    assert.ok(!h.html().includes('미적용')); assert.ok(!h.html().includes('Alert를 불러오지 못했습니다.'));
+    assert.ok(h.html().includes('미적용')); assert.ok(!h.html().includes('Alert를 불러오지 못했습니다.'));
   }
 });
 
-test('filters/clear/reset/retry use applied 20, preserve drafts 37 and ID; valid failed apply remains 37', async () => {
-  const calls=[]; let fail=false;
-  const h=view(createApiAdapter(async url=>{
-    calls.push(url); if(fail){fail=false;throw Error('offline');}
-    return json(envelope([], Number(new URL(url,'http://local').searchParams.get('limit'))));
-  }));
-  await h.controller.load(); h.event('limit-input','input','20'); await h.event('limit-form','submit');
-  h.event('limit-input','input','37'); h.event('alert-id','input','18');
-  await h.event('level','change','WARN'); await h.event('human','change','false');
-  await h.event('level','change',''); // Clearing one keeps the other.
-  await h.event('reset','click');
-  assert.deepEqual(calls.slice(-4), ['/alerts?limit=20&level=WARN', '/alerts?limit=20&level=WARN&human_required=false', '/alerts?limit=20&human_required=false', '/alerts?limit=20']);
-  assert.equal(h.controller.state.limitInput.draft,'37'); assert.equal(h.controller.state.idInput.draft,'18');
-  assert.ok(h.html().includes('미적용 · 현재 요청 개수 20건'));
-  fail=true; await h.event('human','change','true'); await h.event('retry-list','click');
-  assert.deepEqual(calls.slice(-2), ['/alerts?limit=20&human_required=true','/alerts?limit=20&human_required=true']);
-  fail=true; await h.event('limit-form','submit'); assert.equal(h.controller.state.query.limit,37);
-  await h.event('retry-list','click');
-  assert.deepEqual(calls.slice(-2), ['/alerts?limit=37&human_required=true','/alerts?limit=37&human_required=true']);
-  assert.ok(h.html().includes('value="37"')); assert.ok(h.html().includes('value="18"'));
+test('all draft edits and reset are request-free; retry uses failed applied, not later draft', async () => {
+  const calls=[];let fail=false;
+  const h=view(createApiAdapter(async url=>{calls.push(url);if(fail){fail=false;throw Error('offline');}return json(envelope([],Number(new URL(url,'http://local').searchParams.get('limit'))));}));
+  await h.controller.load();
+  h.event('limit-input','input','37');h.event('alert-id','input','18');
+  h.event('level','change','WARN');h.event('human','change','false');
+  h.event('created-from','input','2026-10-08T09:00');h.event('created-to','input','2026-10-09T09:00');h.event('sort-order','change','asc');
+  assert.equal(calls.length,1);assert.ok(h.html().includes('조회 조건 변경 · 미적용'));
+  fail=true;await h.event('query-form','submit');
+  assert.equal(h.controller.state.query.limit,37);assert.equal(h.controller.state.list.phase,'error');
+  h.event('limit-input','input','20');await h.event('reset','click');
+  assert.equal(calls.length,2);assert.equal(h.controller.state.draft.limit,'20');assert.equal(h.controller.state.draft.sort_order,'asc');assert.equal(h.controller.state.idInput.draft,'18');
+  await h.event('retry-list','click');assert.equal(calls.at(-1),calls.at(-2));
+  const params=new URL(calls.at(-1),'http://local').searchParams;
+  assert.equal(params.get('human_required'),'false');assert.equal(params.get('created_from'),'2026-10-08T09:00:00+09:00');assert.equal(params.get('sort_order'),'asc');
+  await h.event('query-form','submit');assert.equal(calls.at(-1),'/alerts?limit=20&sort_order=asc');
 });
 
 test('full envelopes validate count/limit/cursor and preserve server order and next cursor', async () => {
-  const response={...envelope([copy(17),copy(19)]),next_cursor:{alert_id:19,created_at:copy(19).created_at}};
+  const response=envelope([copy(19),copy(17)]);
   const c=createController({list:async()=>response}); await c.load();
-  assert.deepEqual(c.state.list.data.map(a=>a.alert_id),[17,19]); assert.equal(c.state.list.response,response);
+  assert.deepEqual(c.state.list.data.map(a=>a.alert_id),[19,17]); assert.equal(c.state.list.response,response);
   for (const mutate of [r=>r.count++,r=>r.count='2',r=>r.limit=37,r=>delete r.next_cursor,r=>r.next_cursor={},r=>r.alerts=Array(6).fill(copy(17))]) {
     const bad=structuredClone(response); mutate(bad);
     const h=view({list:async()=>bad}); await h.controller.load();
     assert.equal(h.controller.state.list.phase,'invalid'); assert.ok(h.html().includes('응답 데이터를 확인할 수 없습니다.'));
-    assert.ok(!h.html().includes('현재 표시')); assert.ok(!h.html().includes('현재 조회 조건에 맞는 Alert가 없습니다.'));
+    assert.ok(!h.html().includes('현재 불러온')); assert.ok(!h.html().includes('현재 조회 조건에 맞는 Alert가 없습니다.'));
   }
 });
 
 test('list selection clears while querying, refetches same ID independent of position, drops absent ID', async () => {
   const calls=[]; let page=[copy(18),copy(17)]; const pending=defer(); let wait=false;
   const c=createController({list:q=>wait?pending.promise:Promise.resolve(envelope(page,q.limit)),detail:async id=>{calls.push(id);return copy(id);}});
-  await c.load(); await c.select(18); page.reverse(); await c.load();
+  await c.load(); await c.select(18); page.reverse(); await c.load({sort_order:'asc'});
   assert.deepEqual(calls,[18,18]); assert.equal(c.state.selected,18);
   wait=true; const load=c.load({limit:1}); assert.equal(c.state.list.data,null); assert.equal(c.state.detail.data,null); assert.equal(c.state.detail.phase,'loading');
   pending.resolve(envelope([copy(17)],1)); await load;
@@ -172,7 +155,7 @@ test('direct success/error/404/invalid/pending survive every list requery and em
 test('latest limit=100 wins over old limit=37 success and failure', async () => {
   for(const fail of [false,true]) {
     const a=defer(),b=defer();const c=createController({list:q=>q.limit===37?a.promise:b.promise});
-    c.setLimitDraft('37');const old=c.applyLimit(); c.setLimitDraft('100');const current=c.applyLimit();
+    c.setQueryDraft('limit','37');const old=c.applyQuery(); c.setQueryDraft('limit','100');const current=c.applyQuery();
     b.resolve(envelope([copy(17)],100));await current;
     if(fail)a.reject(Error('old failure'));else a.resolve(envelope([copy(18)],37));await old;
     assert.equal(c.state.query.limit,100); assert.equal(c.state.list.phase,'success');assert.equal(c.state.list.data[0].alert_id,17);

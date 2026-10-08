@@ -1,141 +1,109 @@
-// CLI browser verification against the retained isolated DB from verify-query-controls.py.
-// Playwright is a verification tool, not an application/runtime dependency.
+// Playwright CLI QA against the explicitly retained, isolated Day9 TCP evidence.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
-
-const {values} = parseArgs({options: {evidence:{type:'string'}, output:{type:'string'}, playwright:{type:'string'}}});
-assert.ok(values.evidence && values.output, 'Pass --evidence HTTP JSON and --output a new evidence directory');
-const evidence = JSON.parse(fs.readFileSync(values.evidence, 'utf8'));
-const base = new URL(evidence.base);
-assert.ok(['127.0.0.1','localhost'].includes(base.hostname), 'Local demo only');
-assert.equal(evidence.row_count,120);
-const output = path.resolve(values.output);
-fs.mkdirSync(output); // Refuse overwriting an earlier evidence run.
-const {chromium} = await import(values.playwright ? pathToFileURL(path.resolve(values.playwright)).href : 'playwright');
-const browser = await chromium.launch({channel:'chrome',headless:true});
-const context = await browser.newContext({viewport:{width:1440,height:1000},recordHar:{path:path.join(output,'network.har'),urlFilter:/\/alerts(?:\?|\/)/}});
-const page = await context.newPage();
-const requests=[], consoleErrors=[], exceptions=[], checks=[], devtools=[];
-page.on('request', r=>{if(new URL(r.url()).pathname.startsWith('/alerts'))requests.push(r.url().slice(evidence.base.length));});
-page.on('console', m=>{if(m.type()==='error')consoleErrors.push({text:m.text(),url:m.location().url});});
-page.on('pageerror', e=>exceptions.push(String(e)));
-const cdp=await context.newCDPSession(page); await cdp.send('Network.enable');
-cdp.on('Network.requestWillBeSent', e=>{if(new URL(e.request.url).pathname.startsWith('/alerts'))devtools.push({event:'request',id:e.requestId,url:e.request.url,method:e.request.method});});
-cdp.on('Network.responseReceived', e=>{if(new URL(e.response.url).pathname.startsWith('/alerts'))devtools.push({event:'response',id:e.requestId,url:e.response.url,status:e.response.status});});
-const listRequests=()=>requests.filter(url=>url.startsWith('/alerts?'));
+const {values}=parseArgs({options:{evidence:{type:'string'},output:{type:'string'},playwright:{type:'string'},baseline:{type:'string'}}});
+assert.ok(values.evidence&&values.output);
+const evidence=JSON.parse(fs.readFileSync(values.evidence,'utf8'));
+assert.ok(['127.0.0.1','localhost'].includes(new URL(evidence.base).hostname));assert.equal(evidence.row_count,240);
+const output=path.resolve(values.output);fs.mkdirSync(output);
+const {chromium}=await import(values.playwright?pathToFileURL(path.resolve(values.playwright)).href:'playwright');
+const browser=await chromium.launch({channel:'chrome',headless:true});
+const context=await browser.newContext({viewport:{width:1440,height:1000},recordHar:{path:path.join(output,'network.har'),urlFilter:/\/alerts(?:\?|\/)/}});
+const page=await context.newPage();const requests=[],consoleErrors=[],exceptions=[],checks=[],devtools=[];
+page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/alerts'))requests.push(r.url());});
+page.on('console',m=>{if(m.type()==='error')consoleErrors.push({text:m.text(),url:m.location().url});});page.on('pageerror',e=>exceptions.push(String(e)));
+const cdp=await context.newCDPSession(page);await cdp.send('Network.enable');
+cdp.on('Network.requestWillBeSent',e=>{if(new URL(e.request.url).pathname.startsWith('/alerts'))devtools.push({event:'request',url:e.request.url,method:e.request.method});});
+cdp.on('Network.responseReceived',e=>{if(new URL(e.response.url).pathname.startsWith('/alerts'))devtools.push({event:'response',url:e.response.url,status:e.response.status});});
+const check=name=>{checks.push(name);console.log('PASS: '+name);};
+const listRequests=()=>requests.filter(url=>new URL(url).pathname==='/alerts');
 const rows=()=>page.locator('[data-select]').evaluateAll(nodes=>nodes.map(n=>Number(n.dataset.select)));
-const check=name=>{checks.push(name);console.log(`PASS: ${name}`);};
-async function settledList() {await page.waitForFunction(()=>document.querySelector('.master')?.getAttribute('aria-busy')==='false');}
-async function settledDetail(id) {
-  await page.waitForFunction(id=>document.querySelector('.inspector')?.getAttribute('aria-busy')==='false' &&
-    [...document.querySelectorAll('.trace dt')].some(n=>n.textContent.includes('alert_id') && Number(n.nextElementSibling.textContent)===id),id);
+const settled=()=>page.waitForFunction(()=>document.querySelector('#master')?.getAttribute('aria-busy')==='false');
+const settledDetail=id=>page.waitForFunction(id=>document.querySelector('#inspector')?.getAttribute('aria-busy')==='false'&&[...document.querySelectorAll('.trace dt')].some(n=>n.textContent.includes('alert_id')&&Number(n.nextElementSibling.textContent)===id),id);
+async function listAction(action,expected,append=false){
+ const before=listRequests().length,previous=append?await rows():[];
+ const [response]=await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname==='/alerts'),action()]);
+ await settled();await page.waitForFunction(()=>!document.querySelector('#more')?.disabled);
+ assert.equal(listRequests().length,before+1);
+ if(expected)assert.deepEqual(Object.fromEntries(new URL(response.url()).searchParams),expected);
+ const body=await response.json();await page.waitForFunction(n=>document.querySelectorAll('[data-select]').length===n,previous.length+body.count);
+ assert.deepEqual(await rows(),[...previous,...body.alerts.map(a=>a.alert_id)]);
+ assert.equal(await page.locator('.page-count').textContent(),`현재 불러온 ${previous.length+body.count}건`);return body;
 }
-async function listAction(action, params) {
-  const before=listRequests().length;
-  const [r]=await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname==='/alerts'),action()]);
-  await settledList();
-  assert.equal(listRequests().length,before+1,'one list request per action');
-  const url=new URL(r.url());assert.deepEqual(Object.fromEntries(url.searchParams),params);
-  const body=await r.json();assert.deepEqual(await rows(),body.alerts.map(a=>a.alert_id));
-  assert.equal(await page.locator('.page-count').textContent(),`현재 표시 ${body.count}건`);
-  const expected=evidence.checks.find(c=>c.path===url.pathname+url.search);
-  if(expected)assert.deepEqual(body.alerts.map(a=>a.alert_id),expected.ids);
-  return body;
+const submit=()=>page.locator('#query-form button[type=submit]').click();
+async function direct(id){
+ await page.locator('#alert-id').fill(String(id));
+ const [response]=await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname===`/alerts/${id}`),page.locator('#id-form button').click()]);
+ assert.equal(new URL(response.url()).search,'');if(response.ok())await settledDetail(id);return response;
 }
-async function applyLimit(value, enter=false, filters={}) {
-  await page.locator('#limit-input').fill(String(value));
-  return listAction(()=>enter?page.locator('#limit-input').press('Enter'):page.locator('#limit-form button').click(),{limit:String(value),...filters});
-}
-async function direct(id, enter=false) {
-  await page.locator('#alert-id').fill(String(id));
-  const before=requests.length;
-  const [r]=await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname===`/alerts/${id}`),
-    enter?page.locator('#alert-id').press('Enter'):page.locator('#id-form button').click()]);
-  await page.waitForFunction(()=>document.querySelector('.inspector')?.getAttribute('aria-busy')==='false');
-  assert.equal(requests.length,before+1,'one detail request per action');
-  assert.equal(new URL(r.url()).search,'');
-  assert.ok((await page.locator('.inspector-head').textContent()).includes(`ID 직접 조회 · Alert #${id}`));
-  if(r.status()===200)await settledDetail(id);
-  return r;
-}
+let baseline=null;
 try {
-  await page.goto(evidence.base+'/dashboard/'); await settledList();
-  assert.deepEqual(listRequests(),['/alerts?limit=5']); assert.equal((await rows()).length,5);
-  assert.equal(await page.locator('#limit-input').getAttribute('type'),'number');check('initial 5, built API mode, native numeric input');
-  const before=requests.length;
-  await page.locator('#limit-input').fill('37'); await page.locator('#alert-id').fill(String(evidence.outside_page_target.alert_id));
-  assert.equal(requests.length,before);check('typing both inputs sends no request');
-  await listAction(()=>page.locator('#limit-form button').click(),{limit:'37'});
-  await applyLimit(1,true);await applyLimit(100,true);
-  assert.equal((await rows()).length,100);check('button and Enter each issue one request; limit 1/37/100 actual rows');
-  await applyLimit(20);await page.locator('#limit-input').fill('37');
-  await listAction(()=>page.locator('#level').selectOption('WARN'),{limit:'20',level:'WARN'});
-  await listAction(()=>page.locator('#human').selectOption('false'),{limit:'20',level:'WARN',human_required:'false'});
-  assert.equal(await page.locator('#limit-input').inputValue(),'37');assert.equal(await page.locator('#alert-id').inputValue(),String(evidence.outside_page_target.alert_id));
-  assert.equal(await page.locator('#limit-note').textContent(),'미적용 · 현재 요청 개수 20건');
-  await listAction(()=>page.locator('#level').selectOption(''),{limit:'20',human_required:'false'});
-  await listAction(()=>page.locator('#reset').click(),{limit:'20'});
-  assert.equal(await page.locator('#limit-input').inputValue(),'37');check('AND/false, clear one filter, reset only filters, unapplied drafts preserved');
-  await page.locator('#limit-input').focus();await page.keyboard.press('End');await page.keyboard.type('8');
-  assert.equal(await page.locator('#limit-input').inputValue(),'378');assert.equal(await page.evaluate(()=>document.activeElement.id),'limit-input');
-  let count=requests.length;
-  for(const invalid of ['', '0','-1','101','1.5']) {
-    await page.locator('#limit-input').fill(invalid);await page.locator('#limit-input').press('Enter');
-    assert.equal(requests.length,count);assert.equal(await page.locator('#limit-note').textContent(),'조회 개수는 1~100의 정수로 입력하세요.');
-    assert.equal((await rows()).length,20);
-  }
-  check('focus retained while typing; invalid limit does not query or clear current results');
-  await applyLimit(37);let ids=await rows();
-  const keep=ids[2];await page.locator(`[data-select="${keep}"]`).click();await settledDetail(keep);
-  await applyLimit(100);await settledDetail(keep);assert.equal(await page.locator('[aria-current="true"]').getAttribute('data-select'),String(keep));
-  ids=await rows();const drop=ids[11];await page.locator(`[data-select="${drop}"]`).click();await settledDetail(drop);
-  await applyLimit(5);await page.locator('.no-selection').waitFor();assert.equal(await page.locator('.detail-intro').count(),0);
-  check('list ID retained/refetched, selection outside smaller page cleared');
-  await listAction(()=>page.locator('#level').selectOption('WARN'),{limit:'5',level:'WARN'});
-  const target=evidence.outside_page_target.alert_id; assert.ok(!(await rows()).includes(target));
-  await direct(target);assert.equal((await page.locator('.inspector .sev span').textContent()).trim(),'CRITICAL');
-  const previousRows=await rows();assert.ok(!previousRows.includes(target));check('outside-page CRITICAL direct lookup from WARN list; no list insertion');
-  await page.locator('#alert-id').fill('17');await page.locator('#limit-input').fill('37');
-  await listAction(()=>page.locator('#human').selectOption('false'),{limit:'5',level:'WARN',human_required:'false'});await settledDetail(target);
-  await applyLimit(37,false,{level:'WARN',human_required:'false'});await settledDetail(target);
-  await listAction(()=>page.locator('#reset').click(),{limit:'37'});await settledDetail(target);
-  assert.equal(await page.locator('#alert-id').inputValue(),'17');check('direct result survives list filters, limit apply, reset; ID draft retained');
-  const clicked=(await rows())[0];await page.locator(`[data-select="${clicked}"]`).click();await settledDetail(clicked);
-  assert.ok(!(await page.locator('.inspector-head').textContent()).includes('ID 직접 조회'));
-  await direct(clicked,true);await page.locator(`[data-select="${clicked}"]`).click();await settledDetail(clicked);
-  assert.ok(!(await page.locator('.inspector-head').textContent()).includes('ID 직접 조회'));await page.locator('#close').click();await page.locator('.no-selection').waitFor();
-  await direct(target,true);await page.locator('#close').click();await page.locator('.no-selection').waitFor();
-  check('same ID source switching; ID Enter single request; close both sources');
-  const r=await direct(evidence.missing_id);assert.equal(r.status(),404);
-  assert.ok((await page.locator('.inspector').textContent()).includes('해당 Alert를 찾을 수 없습니다.'));assert.equal(await page.locator('.detail-intro').count(),0);
-  await listAction(()=>page.locator('#level').selectOption('INFO'),{limit:'37',level:'INFO'});
-  await listAction(()=>page.locator('#human').selectOption('true'),{limit:'37',level:'INFO',human_required:'true'});
-  assert.equal((await rows()).length,0);assert.ok((await page.locator('.master').textContent()).includes('현재 조회 조건에 맞는 Alert가 없습니다.'));
-  assert.ok((await page.locator('.inspector').textContent()).includes('해당 Alert를 찾을 수 없습니다.'));
-  await direct(target);check('real detail 404 survives empty list; direct lookup succeeds from empty list');
-  count=requests.length;
-  for(const invalid of ['', '0','-1','1.5','abc','9007199254740993']) {
-    await page.locator('#alert-id').fill(invalid);await page.locator('#id-form button').click();assert.equal(requests.length,count);await settledDetail(target);
-    assert.ok((await page.locator('#id-note').textContent()).includes('양의 정수'));
-  }
-  check('invalid ID leaves current detail/list intact');
-  await listAction(()=>page.locator('#reset').click(),{limit:'37'});await applyLimit(5);await settledDetail(target);
-  await page.locator('#alert-id').fill(String(target));
-  const layout=await page.evaluate(()=>{
-    const master=document.querySelector('.master').getBoundingClientRect(),inspector=document.querySelector('.inspector').getBoundingClientRect();
-    return {master:{x:master.x,width:master.width},inspector:{x:inspector.x,width:inspector.width},overflow:document.documentElement.scrollWidth>innerWidth};
-  });
-  assert.ok(layout.master.x<layout.inspector.x);assert.ok(!layout.overflow);assert.equal(exceptions.length,0);
-  const unexpectedErrors=consoleErrors.filter(e=>!e.text.includes('404') || !(/\/alerts\/|\/favicon.ico/.test(e.url)));
-  assert.deepEqual(unexpectedErrors,[]);
-  assert.ok(devtools.some(e=>e.event==='request'&&e.url.includes('limit=100')));assert.ok(devtools.some(e=>e.event==='response'&&e.status===404));
-  await page.screenshot({path:path.join(output,'dashboard.png'),fullPage:true});check('CDP Network paths/parameters/statuses, no JS errors, 40:60 layout and no horizontal overflow');
-  fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'PASS',browser:browser.version(),checks,requests,devtools,consoleErrors,exceptions,layout},null,2));
-} catch(error) {
-  await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});
-  fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'FAIL',checks,error:String(error),requests,consoleErrors,exceptions},null,2));
-  throw error;
-} finally {await context.close();await browser.close();}
+ if(values.baseline){
+  assert.ok(['127.0.0.1','localhost'].includes(new URL(values.baseline).hostname));
+  const old=await context.newPage();await old.goto(values.baseline+'?mode=mock');await old.locator('.detail-intro').waitFor();
+  await old.evaluate(()=>window.originalInput=document.querySelector('#limit-input'));
+  await old.locator('#limit-input').fill('123');await old.locator('#limit-input').focus();await old.keyboard.press('Home');await old.keyboard.press('ArrowRight');await old.keyboard.type('98');
+  baseline=await old.evaluate(()=>({sameNode:window.originalInput===document.querySelector('#limit-input'),originalConnected:window.originalInput.isConnected,type:document.querySelector('#limit-input').type,caret:document.querySelector('#limit-input').selectionStart,value:document.querySelector('#limit-input').value}));
+  assert.equal(baseline.sameNode,false);assert.equal(baseline.originalConnected,false);assert.equal(baseline.caret,null);await old.close();check('Day8 baseline: input node replaced, number input has no selection API; observed middle edit recorded');
+ }
+ await page.goto(evidence.base+'/dashboard/');await settled();assert.equal((await rows()).length,5);
+ assert.deepEqual(Object.fromEntries(new URL(listRequests()[0]).searchParams),{limit:'5',sort_order:'desc'});
+ assert.ok((await page.locator('.identity').textContent()).includes('AI 의사결정 모니터'));
+ await page.evaluate(()=>{window.limitNode=document.querySelector('#limit-input');window.idNode=document.querySelector('#alert-id');});
+ await page.locator('#limit-input').fill('');await page.locator('#limit-input').pressSequentially('37');assert.equal(await page.locator('#limit-input').inputValue(),'37');
+ for(const [id,value] of [['level','WARN'],['human','false'],['sort-order','asc']])await page.locator('#'+id).selectOption(value);
+ await page.locator('#created-from').fill('2026-10-08T09:01');await page.locator('#created-to').fill('2026-10-08T09:03');
+ await page.locator('#alert-id').fill(String(evidence.outside_page_target.alert_id));assert.equal(listRequests().length,1);assert.ok((await page.locator('#query-dirty').textContent()).includes('미적용'));
+ let body=await listAction(submit,{limit:'37',level:'WARN',human_required:'false',sort_order:'asc',created_from:'2026-10-08T09:01:00+09:00',created_to:'2026-10-08T09:03:00+09:00'});
+ assert.ok(body.alerts.every(a=>a.level==='WARN'&&!a.human_required));check('all draft edits are request-free; one button request with AND, false, KST dates and ascending order');
+ await page.locator('#reset').click();assert.equal(listRequests().length,2);assert.equal(await page.locator('#limit-input').inputValue(),'37');assert.equal(await page.locator('#sort-order').inputValue(),'asc');
+ await listAction(()=>page.locator('#limit-input').press('Enter'),{limit:'37',sort_order:'asc'});check('reset only draft filters; native Enter issues exactly one new first page');
+ for(const limit of ['1','100']){await page.locator('#limit-input').fill(limit);await listAction(submit,{limit,sort_order:'asc'});}
+ const firstIds=await rows();const chosen=firstIds[3];await page.locator(`[data-select="${chosen}"]`).click();await settledDetail(chosen);
+ await page.locator('#level').selectOption('CRITICAL');await page.locator('#limit-input').fill('37');
+ await page.locator('#more').scrollIntoViewIfNeeded();const scroll=await page.evaluate(()=>scrollY);assert.ok(scroll>0,'verify a real nonzero viewport scroll');
+ const first=await (await context.request.get(evidence.base+'/alerts?limit=100&sort_order=asc')).json();
+ const params={limit:'100',sort_order:'asc',cursor_created_at:first.next_cursor.created_at,cursor_alert_id:String(first.next_cursor.alert_id)};
+ body=await listAction(()=>page.locator('#more').click(),params,true);assert.equal((await rows()).length,200);await settledDetail(chosen);
+ assert.equal(await page.evaluate(()=>scrollY),scroll);assert.equal(await page.locator('#limit-input').inputValue(),'37');assert.equal(await page.locator('#level').inputValue(),'CRITICAL');
+ check('limit 1/37/100; 100+100=200 in server order; more ignores draft and retains selected detail, input and scroll');
+ body=await listAction(()=>page.locator('#more').click(),{limit:'100',sort_order:'asc',cursor_created_at:body.next_cursor.created_at,cursor_alert_id:String(body.next_cursor.alert_id)},true);
+ assert.equal((await rows()).length,240);assert.equal(await page.locator('#more').count(),0);assert.ok((await page.locator('#pagination').textContent()).includes('더 불러올 Alert가 없습니다.'));
+ assert.deepEqual(await rows(),evidence.details.map(a=>a.alert_id));check('ascending walk across identical timestamps: all 240, no duplicate/missing, explicit final cursor state');
+ const beforeInvalid=listRequests().length,retained=await rows();
+ for(const value of ['', '0','101','1.5','text']){await page.locator('#limit-input').fill(value);await submit();assert.equal(listRequests().length,beforeInvalid);assert.deepEqual(await rows(),retained);await settledDetail(chosen);}
+ await page.locator('#limit-input').fill('37');await page.locator('#created-from').fill('2026-10-08T09:03');await page.locator('#created-to').fill('2026-10-08T09:02');await submit();assert.equal(listRequests().length,beforeInvalid);check('invalid limit/range preserve applied results, cursor and detail without HTTP');
+ await page.locator('#reset').click();await page.locator('#sort-order').selectOption('desc');await page.locator('#limit-input').fill('100');
+ body=await listAction(submit,{limit:'100',sort_order:'desc'});await page.locator('.no-selection').waitFor();assert.equal((await rows()).length,100);check('new applied conditions reset accumulated list/cursor and drop absent first-page candidate');
+ const target=evidence.outside_page_target.alert_id;await direct(target);const directHtml=await page.locator('#detail-content').innerHTML();
+ const saved=await rows(),failedParams={limit:'100',sort_order:'desc',cursor_created_at:body.next_cursor.created_at,cursor_alert_id:String(body.next_cursor.alert_id)};
+ let failUrl;await page.route('**/alerts?*',async route=>{if(new URL(route.request().url()).searchParams.has('cursor_alert_id')){failUrl=route.request().url();await route.fulfill({status:503,contentType:'application/json',body:'{}'});}else await route.continue();});
+ await page.locator('#more').click();await page.locator('#pagination [role=alert]').waitFor();assert.deepEqual(await rows(),saved);assert.equal(await page.locator('#detail-content').innerHTML(),directHtml);
+ await page.unroute('**/alerts?*');body=await listAction(()=>page.locator('#more').click(),failedParams,true);assert.equal(listRequests().at(-1),failUrl);assert.equal(await page.locator('#detail-content').innerHTML(),directHtml);
+ await listAction(()=>page.locator('#more').click(),{limit:'100',sort_order:'desc',cursor_created_at:body.next_cursor.created_at,cursor_alert_id:String(body.next_cursor.alert_id)},true);
+ assert.deepEqual(await rows(),evidence.details.map(a=>a.alert_id).reverse());check('additional HTTP failure preserves list/direct result; manual retry sends same applied cursor; descending walk no gaps');
+ await page.locator('#limit-input').fill('123');await page.locator('#limit-input').evaluate(n=>{n.focus();n.setSelectionRange(1,1);});await page.keyboard.type('98');assert.equal(await page.locator('#limit-input').inputValue(),'19823');
+ await page.keyboard.press('Backspace');assert.equal(await page.locator('#limit-input').inputValue(),'1923');await page.locator('#limit-input').evaluate(n=>n.setSelectionRange(1,1));await page.keyboard.press('Delete');assert.equal(await page.locator('#limit-input').inputValue(),'123');
+ await page.locator('#alert-id').fill('123');await page.locator('#alert-id').evaluate(n=>{n.focus();n.setSelectionRange(1,1);});await page.keyboard.type('98');assert.equal(await page.locator('#alert-id').inputValue(),'19823');await page.keyboard.press('Backspace');assert.equal(await page.locator('#alert-id').inputValue(),'1923');check('continuous 37 and middle multi-digit insertion/deletion work for persistent limit and ID nodes');
+ let release,entered;const gate=new Promise(r=>release=r),seen=new Promise(r=>entered=r);
+ const delayedId=evidence.details[0].alert_id;
+ await page.route(`**/alerts/${delayedId}`,async route=>{entered();await gate;await route.continue();});
+ await page.locator(`[data-select="${delayedId}"]`).click();await seen;
+ await page.locator('#limit-input').fill('123');await page.locator('#limit-input').evaluate(n=>{n.focus();n.setSelectionRange(1,1);});release();await settledDetail(delayedId);
+ assert.deepEqual(await page.evaluate(()=>({same:window.limitNode===document.querySelector('#limit-input'),sameId:window.idNode===document.querySelector('#alert-id'),active:document.activeElement.id,start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd,value:document.activeElement.value})),{same:true,sameId:true,active:'limit-input',start:1,end:1,value:'123'});
+ await page.keyboard.type('9');assert.equal(await page.locator('#limit-input').inputValue(),'1923');await page.unroute(`**/alerts/${delayedId}`);check('async detail response retains original inputs, focus, caret and unapplied draft');
+ await page.locator('#limit-input').fill('5');await page.locator('#level').selectOption('INFO');await page.locator('#human').selectOption('true');
+ await direct(evidence.missing_id);await listAction(submit,{limit:'5',level:'INFO',human_required:'true',sort_order:'desc'});
+ assert.ok((await page.locator('#list-content').textContent()).includes('현재 조회 조건에 맞는 Alert가 없습니다.'));assert.ok((await page.locator('#detail-content').textContent()).includes('해당 Alert를 찾을 수 없습니다.'));check('direct 404 survives an independently successful empty list');
+ await page.locator('#reset').click();await listAction(submit,{limit:'5',sort_order:'desc'});await direct(target);
+ const layout=await page.evaluate(()=>{const a=document.querySelector('#master').getBoundingClientRect(),b=document.querySelector('#inspector').getBoundingClientRect();return {masterWidth:a.width,inspectorWidth:b.width,leftToRight:a.x<b.x,overflow:document.documentElement.scrollWidth>innerWidth,controls:[...document.querySelectorAll('#query-form input,#query-form select')].map(n=>({id:n.id,width:n.getBoundingClientRect().width,client:n.clientWidth,scroll:n.scrollWidth}))};});
+ assert.ok(layout.leftToRight&&!layout.overflow);assert.ok(layout.controls.every(c=>c.width>=180));assert.equal(exceptions.length,0);
+ const unexpected=consoleErrors.filter(e=>!(/Failed to load resource/.test(e.text)&&(/\/alerts(?:\?|\/)|\/favicon.ico/.test(e.url))));assert.deepEqual(unexpected,[]);
+ assert.ok(devtools.some(e=>e.url.includes('cursor_alert_id')));assert.ok(devtools.some(e=>e.url.includes('created_from')));check('CDP Network records filters/dates/sort/cursor; no JS exceptions or unexpected console errors; query form fits desktop');
+ await page.screenshot({path:path.join(output,'dashboard.png'),fullPage:true});
+ fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'PASS',browser:browser.version(),baseline,checks,requests,devtools,consoleErrors,exceptions,layout},null,2));
+} catch(error){await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'FAIL',checks,error:String(error),baseline,requests,consoleErrors,exceptions},null,2));throw error;}
+finally{await context.close();await browser.close();}

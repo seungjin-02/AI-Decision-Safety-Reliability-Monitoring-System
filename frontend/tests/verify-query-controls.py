@@ -1,4 +1,4 @@
-"""Create 120 non-sensitive alerts through POST in an EMPTY isolated demo DB.
+"""Create 240 non-sensitive alerts through POST in an EMPTY isolated demo DB.
 
 Compare real TCP GET filters/limits/order/cursors and server decisions to core.
 No default/user DB is opened. The demo data and JSON evidence are retained.
@@ -38,9 +38,9 @@ def run(base, database):
         ('info_missing', {'model_version': None}),
     ]
     details = []
-    for index in range(120):
+    for index in range(240):
         label, override = profiles[index % len(profiles)]
-        payload = dict(event_id=f'day8_demo_{index:03d}_{label}', decision_type='approve', confidence=0.9,
+        payload = dict(event_id=f'day9_demo_{index:03d}_{label}', decision_type='approve', confidence=0.9,
                        latency_ms=100, model_version='v1', error_code=None, metadata={'source': 'non-sensitive-demo'})
         payload.update(override)
         created = request('/evaluate', payload)
@@ -57,6 +57,12 @@ def run(base, database):
             expected_signals.append(signal)
         assert detail['signals'] == expected_signals and 'metadata' not in detail
         details.append(detail)
+    # Tie timestamps across page boundaries in this EMPTY, explicitly supplied
+    # demo database only. Core decisions and storage schema remain unchanged.
+    with sqlite3.connect(database) as db:
+        db.executemany('UPDATE alerts SET created_at=? WHERE alert_id=?',
+                       [(f'2026-10-08T00:{i // 60:02d}:00+00:00', a['alert_id']) for i,a in enumerate(details)])
+    details = [request(f'/alerts/{a["alert_id"]}') for a in details]
     ordered = sorted(details, key=lambda a: (a['created_at'], a['alert_id']), reverse=True)
     checks = []
     for limit in [1, 5, 37, 100]:
@@ -77,6 +83,36 @@ def run(base, database):
                 cursor = {'created_at': expected[-1]['created_at'], 'alert_id': expected[-1]['alert_id']} if len(matching) > limit else None
                 assert page['next_cursor'] == cursor, path
                 checks.append({'path': path, 'count': page['count'], 'ids': [a['alert_id'] for a in page['alerts']], 'next_cursor': cursor})
+    pagination = []
+    for direction in ['desc','asc']:
+        expected_all = sorted(details, key=lambda a:(a['created_at'],a['alert_id']), reverse=direction=='desc')
+        for limit in [1,5,37,100]:
+            collected, cursor = [], None
+            while True:
+                params={'limit':limit,'sort_order':direction}
+                if cursor:
+                    params.update(cursor_created_at=cursor['created_at'],cursor_alert_id=cursor['alert_id'])
+                path='/alerts?'+urlencode(params)
+                result=request(path)
+                assert result['count']==len(result['alerts']) and result['limit']==limit
+                collected.extend(result['alerts'])
+                cursor=result['next_cursor']
+                if cursor:
+                    assert cursor == {key:result['alerts'][-1][key] for key in ['created_at','alert_id']}
+                pagination.append({'path':path,'ids':[a['alert_id'] for a in result['alerts']],'next_cursor':cursor})
+                if cursor is None: break
+            assert collected==expected_all and len({a['alert_id'] for a in collected})==240
+    for params, indices in [
+        ({'created_from':'2026-10-08T09:01:00+09:00','created_to':'2026-10-08T09:02:00+09:00'},range(60,120)),
+        ({'created_to':'2026-10-08T09:01:00+09:00'},range(60)),
+        ({'created_from':'2026-10-08T09:03:00+09:00'},range(180,240)),
+    ]:
+        result=request('/alerts?'+urlencode({'limit':100,'sort_order':'asc',**params}))
+        assert result['alerts']==[details[i] for i in indices]
+    for params in [{'sort_order':'invalid'},{'cursor_alert_id':1},{'cursor_created_at':'2026-10-08T09:00:00+09:00'},{'created_from':'2026-10-08T09:00:00'},{'created_from':'2026-10-08T09:00:00+09:00','created_to':'2026-10-08T09:00:00+09:00'}]:
+        try:
+            request('/alerts?'+urlencode(params));raise AssertionError('Expected 422')
+        except HTTPError as error: assert error.code==422
     assert len(request('/alerts?limit=100')['alerts']) == 100
     latest_ids = {a['alert_id'] for a in ordered[:5]}
     target = next(a for a in ordered if a['level'] == 'CRITICAL' and a['alert_id'] not in latest_ids)
@@ -93,7 +129,7 @@ def run(base, database):
         rows = db.execute('SELECT event_id FROM alerts ORDER BY alert_id').fetchall()
         assert [r[0] for r in rows] == [a['event_id'] for a in details]
     return {'base': base, 'database': str(database), 'row_count': len(details), 'checks': checks,
-            'outside_page_target': target, 'missing_id': missing_id, 'details': details}
+            'pagination':pagination, 'outside_page_target': target, 'missing_id': missing_id, 'details': details}
 
 
 if __name__ == '__main__':
@@ -107,5 +143,5 @@ if __name__ == '__main__':
         parser.error('Use the new empty demo DB started by c2_dashboard_local.py --db <new-isolated-db>')
     result = run(f'http://127.0.0.1:{args.port}', database)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-    print('PASS: 120 POST/GET/core comparisons; 48 filter/limit/order/count/cursor combinations; limit=100 returns 100; outside-page target; detail 404; DB rows retained')
+    print('PASS: 240 POST/GET/core comparisons; 48 filter/limit combinations; 8 full bidirectional tie-boundary walks; half-open KST dates and invalid requests; limit=100 returns 100; outside-page target; detail 404; DB rows retained')
     print(f'Evidence: {args.output.resolve()}')

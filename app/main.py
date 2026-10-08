@@ -205,6 +205,7 @@ def get_alerts_endpoint(search_query: Annotated[AlertSearchQuery, Query()], repo
         created_to=search_query.created_to,
         cursor_created_at=search_query.cursor_created_at,
         cursor_alert_id=search_query.cursor_alert_id,
+        sort_order=search_query.sort_order,
     )
 
     has_next_page = len(fetched_details) > requested_limit
