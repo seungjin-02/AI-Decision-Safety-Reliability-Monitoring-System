@@ -94,3 +94,46 @@ test('actual evidence/empty collection output preserves null, zero, false and em
   for(const [key,text] of Object.entries(expected))assert.equal(view.panel().includes(text),key===kind);
  }
 });
+
+test('reading views preserve data, forms and detail content without additional requests',async()=>{
+ const sink=documentSink();let listCalls=0,detailCalls=0;
+ const controller=createDashboard({list:async()=>{listCalls++;return list([copy(18)]);},detail:async id=>{detailCalls++;return copy(id);}},sink.document,'api');
+ await controller.load();
+ const node=id=>sink.document.getElementById(id);
+ const layout=()=>node('dashboard').getAttribute('data-layout');
+ const input=node('limit-input'),row=node('row-18');
+ assert.equal(layout(),'explore');assert.equal(node('inspector').getAttribute('hidden'),'');
+ sink.event('limit-input','input','37');
+ await sink.event('select-18','click');
+ assert.equal(layout(),'investigate');assert.equal(node('inspector').getAttribute('hidden'),null);
+ const detailNode=node('detail-content'),html=detailNode.innerHTML,snapshot=structuredClone(controller.state);
+ for(const view of ['focus','explore','investigate','focus']){
+  sink.event(`view-${view}`,'click');
+  assert.equal(layout(),view);assert.equal(node(`view-${view}`).getAttribute('aria-pressed'),'true');
+  assert.equal(node('master').getAttribute('hidden'),view==='focus'?'':null);
+  assert.equal(node('query-tools').getAttribute('hidden'),view==='focus'?'':null);
+  assert.equal(node('limit-input'),input);assert.equal(input.value,'37');
+  assert.equal(node('row-18'),row);assert.equal(node('detail-content'),detailNode);assert.equal(detailNode.innerHTML,html);
+  assert.deepEqual(controller.state,snapshot);assert.deepEqual([listCalls,detailCalls],[1,1]);
+ }
+ sink.event('close','click');assert.equal(layout(),'investigate');assert.equal(controller.state.detail.phase,'idle');
+ assert.ok(node('detail-content').innerHTML.includes('검토할 Alert를 선택하세요'));assert.deepEqual([listCalls,detailCalls],[1,1]);
+});
+
+test('direct ID opens investigation only for a valid request, and hidden loading has no stale detail',async()=>{
+ const sink=documentSink();let detailCalls=0;const pending=defer();
+ const controller=createDashboard({list:async()=>list([copy(18)]),detail:id=>{detailCalls++;return id===18?Promise.resolve(copy(id)):pending.promise;}},sink.document,'api');
+ await controller.load();
+ sink.event('alert-id','input','bad');await sink.event('id-form','submit');
+ assert.equal(detailCalls,0);assert.equal(sink.document.getElementById('dashboard').getAttribute('data-layout'),'explore');
+ sink.event('alert-id','input','18');await sink.event('id-form','submit');
+ assert.equal(sink.document.getElementById('dashboard').getAttribute('data-layout'),'investigate');
+ sink.event('view-explore','click');sink.event('alert-id','input','17');const request=sink.event('id-form','submit');
+ assert.equal(sink.document.getElementById('dashboard').getAttribute('data-layout'),'investigate');
+ const panel=sink.document.getElementById('detail-content');assert.ok(panel.innerHTML.includes(contract.statusText.loading));assert.ok(!panel.innerHTML.includes('evt_review_018'));
+ sink.event('view-explore','click');sink.event('alert-id','input','bad');await sink.event('id-form','submit');
+ assert.equal(sink.document.getElementById('dashboard').getAttribute('data-layout'),'explore');assert.equal(detailCalls,2);
+ sink.event('view-focus','click');pending.reject(new contract.AlertNotFound());await request;
+ assert.equal(sink.document.getElementById('dashboard').getAttribute('data-layout'),'focus');
+ assert.ok(panel.innerHTML.includes(contract.statusText.notfound));assert.ok(!panel.innerHTML.includes('evt_review_018'));assert.equal(detailCalls,2);
+});
