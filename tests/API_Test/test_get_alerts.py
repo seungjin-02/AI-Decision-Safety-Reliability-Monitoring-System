@@ -218,6 +218,178 @@ def test_get_search_alerts_returns_alerts_in_search_order(test_db_path):
     assert len(limited_body["alerts"]) == 1
     assert limited_body["alerts"][0]["alert_id"] == second_saved.alert_id
 
+def test_repeated_detail_queries_preserve_creation_trace(test_db_path, request_log_records):
+    payload = {
+        "event_id": "event_repeated_get_trace_001",
+        "decision_type": "approve",
+        "confidence": 0.8,
+        "latency_ms": 300,
+        "model_version": "v1",
+        "error_code": None,
+        "metadata": {},
+    }
+
+    created_response = client.post("/evaluate", json=payload)
+
+    assert created_response.status_code == 201
+
+    created_body = created_response.json()
+    alert_id = created_body["alert_id"]
+    creation_trace = created_body["trace_id"]
+
+    assert creation_trace == created_response.headers["x-trace-id"]
+
+    request_log_records.clear()
+
+    query_traces = []
+
+    # 같은 Alert를 두 번 조회
+    for _ in range(2):
+        previous_log_count = len(request_log_records)
+
+        response = client.get(f"/alerts/{alert_id}")
+
+        assert response.status_code == 200
+
+        body = response.json()
+        query_trace = response.headers["x-trace-id"]
+
+        assert body["alert_id"] == alert_id
+        assert body["trace_id"] == creation_trace
+        assert query_trace
+        assert query_trace != creation_trace
+
+        query_traces.append(query_trace)
+
+        # 이번 GET 요청에서 추가된 로그만 확인
+        request_completed_logs = []
+
+        for record in request_log_records[previous_log_count:]:
+            log_entry = json.loads(record.getMessage())
+
+            if log_entry.get("event") == "request_completed":
+                request_completed_logs.append(log_entry)
+
+        assert len(request_completed_logs) == 1
+
+        request_log = request_completed_logs[0]
+
+        assert request_log["trace_id"] == query_trace
+        assert request_log["method"] == "GET"
+        assert request_log["path"] == f"/alerts/{alert_id}"
+        assert request_log["status_code"] == 200
+        assert request_log["result"] == "success"
+        assert request_log["failure_stage"] is None
+        assert request_log["persistence_outcome"] == "not_attempted"
+
+    assert query_traces[0] != query_traces[1]
+
+    # 조회 후에도 DB의 생성 trace는 그대로인지 확인
+    connection = create_connection(test_db_path)
+
+    try:
+        row = connection.execute(
+            "SELECT trace_id FROM alerts WHERE alert_id = ?",
+            (alert_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert row is not None
+    assert row["trace_id"] == creation_trace
+
+def test_repeated_list_queries_preserve_creation_traces(test_db_path, request_log_records):
+    creation_trace_by_id = {}
+
+    # 서로 다른 생성 요청으로 Alert 두 건 준비
+    for number in range(2):
+        payload = {
+            "event_id": f"event_list_trace_{number}",
+            "decision_type": "approve",
+            "confidence": 0.8,
+            "latency_ms": 300,
+            "model_version": "v1",
+            "error_code": None,
+            "metadata": {},
+        }
+
+        created_response = client.post("/evaluate", json=payload)
+
+        assert created_response.status_code == 201
+
+        created_body = created_response.json()
+
+        assert created_body["trace_id"] == created_response.headers["x-trace-id"]
+
+        creation_trace_by_id[created_body["alert_id"]] = created_body["trace_id"]
+
+    assert len(set(creation_trace_by_id.values())) == 2
+
+    request_log_records.clear()
+    query_traces = []
+
+    # 같은 목록을 두 번 조회
+    for _ in range(2):
+        previous_log_count = len(request_log_records)
+
+        response = client.get("/alerts", params={"limit": 5})
+
+        assert response.status_code == 200
+
+        body = response.json()
+        query_trace = response.headers["x-trace-id"]
+
+        assert query_trace
+        assert body["count"] == 2
+        assert len(body["alerts"]) == 2
+
+        # 각 Alert의 ID와 생성 trace를 대조
+        returned_trace_by_id = {}
+
+        for alert in body["alerts"]:
+            returned_trace_by_id[alert["alert_id"]] = alert["trace_id"]
+
+        assert returned_trace_by_id == creation_trace_by_id
+
+        query_traces.append(query_trace)
+
+        # 이번 목록 요청의 로그 1건 확인
+        request_completed_logs = []
+
+        for record in request_log_records[previous_log_count:]:
+            log_entry = json.loads(record.getMessage())
+
+            if log_entry.get("event") == "request_completed":
+                request_completed_logs.append(log_entry)
+
+        assert len(request_completed_logs) == 1
+
+        request_log = request_completed_logs[0]
+
+        assert request_log["trace_id"] == query_trace
+        assert request_log["method"] == "GET"
+        assert request_log["path"] == "/alerts"
+        assert request_log["status_code"] == 200
+        assert request_log["result"] == "success"
+        assert request_log["failure_stage"] is None
+        assert request_log["persistence_outcome"] == "not_attempted"
+
+    assert query_traces[0] != query_traces[1]
+
+    connection = create_connection(test_db_path)
+
+    try:
+        rows = connection.execute(
+            "SELECT alert_id, trace_id FROM alerts"
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert len(rows) == 2
+
+    for row in rows:
+        assert row["trace_id"] == creation_trace_by_id[row["alert_id"]]
+
 def test_get_alerts_applies_level_and_human_required_filters(test_db_path):
     repository = AlertRepository(test_db_path)
 
