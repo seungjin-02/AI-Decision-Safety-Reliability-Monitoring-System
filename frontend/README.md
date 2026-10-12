@@ -75,3 +75,5 @@ mock은 공유 validator로 전체 fixture를 확인한 뒤 필터·정렬·limi
 **dist는 Git 제외 생성물이다. 직접 수정하지 않는다.** build_web.py는 원본과 fixture만으로 실행 파일 7개를 만든다. FastAPI는 `frontend/dist/`만 `/dashboard/`에 제공한다. dist/index.html이 없으면 대시보드는 503과 빌드 안내를 표시하지만 기존 API의 import와 기동은 유지한다. `/docs`와 루트 GET 경로를 가리지 않는다.
 
 검증 증거(JSON·HAR·스크린샷·격리 DB)는 Git 밖의 실행별 폴더에 보관한다. Node HTML sink는 표시·이벤트 회귀, TestClient는 API 경계 회귀, TCP 스크립트는 실제 HTTP/core 대조, Playwright CLI는 실제 Chrome 입력·네트워크·스크롤 검증을 담당한다. 인증·접근성 전수 검증과 운영 배포 검증은 이번 범위 밖이다.
+
+화면 상단의 탐색·조사·집중 읽기는 동일한 조회 결과를 다른 배치로 읽는 보기 전환이다. 탐색은 전체 목록, 조사는 목록/상세, 집중 읽기는 중앙 상세를 표시한다. 보기 변경만으로 재조회하지 않으며 미적용 입력·누적 결과·현재 상세·원문 펼치기를 보존한다. 상세 보기와 유효한 ID 조회는 탐색에서 조사로 전환한다.

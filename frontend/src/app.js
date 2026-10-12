@@ -59,20 +59,18 @@ function idInput(state) {
 }
 function rows(items, selected) {
   return items.map(a=>`<article id="row-${a.alert_id}" class="inbox-row ${a.alert_id===selected?'selected':''}" aria-label="${esc(a.event_id)}">
-    <div class="inbox-icon ${a.level==='CRITICAL'?'critical':''}">${levelIcon(a.level)}</div>
+    <time class="row-time" datetime="${a.created_at}"><span>${timeParts(a).time}</span><span>${timeParts(a).date}</span></time>
+    ${sev(a)}
     <div class="inbox-main">
     <p class="inbox-summary">${esc(summaryFor(a))}</p>
-    <div class="inbox-topline">
     <span class="mono quiet">${esc(a.event_id)}</span>
-    <time datetime="${a.created_at}">${timeParts(a).date} ${timeParts(a).time}</time>
     </div>
-    <div class="inbox-bottom">${sev(a)}${review(a)}</div>
-    </div>
-    <button class="view-action" data-select="${a.alert_id}" aria-label="${esc(a.event_id)} 상세 보기" ${a.alert_id===selected?'aria-current="true"':''}>${icon('arrow')}</button>
+    ${review(a)}
+    <button class="view-action" data-select="${a.alert_id}" aria-label="${esc(a.event_id)} 상세 보기" ${a.alert_id===selected?'aria-current="true"':''}><span>상세</span>${icon('arrow')}</button>
     </article>`).join('');
 }
 function queue(items, selected) {
-  return `<div class="master-guide"><span>사유 요약 · 이벤트 식별자</span><span>생성 시각 · KST</span></div><div id="alert-rows" class="inbox-list">${rows(items,selected)}</div>`;
+  return `<div class="master-guide" aria-hidden="true"><span>생성 시각 · KST</span><span>평가 수준</span><span>평가 사유 · event_id</span><span>사람 검토</span><span></span></div><div id="alert-rows" class="inbox-list">${rows(items,selected)}</div>`;
 }
 function scores(a){
   return `<div class="scores">
@@ -197,15 +195,40 @@ function stateMessage(phase,where){
 // appended pages retain the original row nodes and the master scroll position.
 const rendered = new WeakMap();
 const draftControls = {'limit-input':'limit',level:'level',human:'human','created-from':'created_from','created-to':'created_to','sort-order':'sort_order'};
+const readingViews = {
+  explore: {label:'탐색', title:'Alert 탐색'},
+  investigate: {label:'조사', title:'선택한 Alert 조사'},
+  focus: {label:'집중 읽기', title:'집중 읽기'}
+};
+// Presentation only: view changes never invoke the adapter or remount content.
+function showReadingView(cache, document, view) {
+  cache.view = view;
+  document.getElementById('dashboard').setAttribute('data-layout',view);
+  document.getElementById('view-title').textContent = readingViews[view].title;
+  for (const name of Object.keys(readingViews)) {
+    document.getElementById(`view-${name}`).setAttribute('aria-pressed',String(name===view));
+  }
+  for (const [id,hidden] of [['query-tools',view==='focus'],['master',view==='focus'],['inspector',view==='explore']]) {
+    const node = document.getElementById(id);
+    if (hidden) node.setAttribute('hidden',''); else node.removeAttribute('hidden');
+  }
+}
 export function renderDashboard(state, document, controller, mode = 'mock') {
   const root = document.getElementById('app');
   let cache = rendered.get(root);
   if (!cache) {
     root.innerHTML = `<header class="mast"><div class="identity"><span class="mark">${icon('mark')}</span><span>AI 의사결정 모니터</span></div><div class="mast-right"><span class="small">내부 운영</span><span class="mast-divider"></span><span class="environment">${mode==='api'?'로컬 API 연결':'예시 데이터'}</span><span class="prototype-note">C2 · 검토용</span></div></header>
-      <main class="split"><section id="master" class="master" aria-labelledby="list-title"><header class="master-head"><div class="list-heading"><h1 id="list-title">Alert 목록</h1><span class="sort">${icon('sort')}KST</span></div>${queryInputs(state)}</header><div id="list-content"></div><div id="pagination"></div><p class="master-foot">${policy}</p></section>
-      <aside id="inspector" class="inspector" aria-label="선택한 Alert 상세">${idInput(state)}<div id="detail-head" class="inspector-head"></div><div id="detail-content"></div></aside></main>`;
-    cache = {buttons: new WeakSet()};
+      <main id="dashboard" class="dashboard" data-layout="explore">
+      <header class="workspace-head"><div><p class="eyebrow">DECISION RELIABILITY / ALERTS</p><h1 id="view-title">Alert 탐색</h1><p class="workspace-description">조회 조건을 적용해 탐색하고, 선택한 Alert의 근거를 읽습니다.</p></div>
+      <div class="reading-views" role="group" aria-label="화면 보기">${Object.entries(readingViews).map(([name,view])=>`<button id="view-${name}" type="button" aria-pressed="${name==='explore'}">${esc(view.label)}</button>`).join('')}</div></header>
+      <section id="query-tools" class="query-tools" aria-label="Alert 조회"><div class="query-shell"><h2>조회 조건</h2>${queryInputs(state)}</div>${idInput(state)}</section>
+      <div class="split"><section id="master" class="master" aria-labelledby="list-title"><header class="master-head"><div class="list-heading"><h2 id="list-title">Alert 목록</h2><span class="sort">${icon('clock')}생성 시각 · KST</span></div></header><div id="list-content"></div><div id="pagination"></div><p class="master-foot">${policy}</p></section>
+      <aside id="inspector" class="inspector" aria-label="선택한 Alert 상세" hidden=""><div id="detail-head" class="inspector-head"></div><div id="detail-content"></div></aside></div></main>`;
+    cache = {buttons: new WeakSet(),view:'explore'};
     rendered.set(root, cache);
+    for (const name of Object.keys(readingViews)) {
+      document.getElementById(`view-${name}`).addEventListener('click',()=>showReadingView(cache,document,name));
+    }
     for (const [id,name] of Object.entries(draftControls)) {
       const event = ['level','human','sort-order'].includes(id) ? 'change' : 'input';
       document.getElementById(id).addEventListener(event,e=>controller.setQueryDraft(name,e.target.value));
@@ -214,7 +237,12 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
     // Native submit covers both Enter and the submit button exactly once.
     document.getElementById('query-form').addEventListener('submit',e=>{e.preventDefault();return controller.applyQuery();});
     document.getElementById('alert-id').addEventListener('input',e=>controller.setIdDraft(e.target.value));
-    document.getElementById('id-form').addEventListener('submit',e=>{e.preventDefault();return controller.lookupId();});
+    document.getElementById('id-form').addEventListener('submit',e=>{
+      e.preventDefault();
+      const request = controller.lookupId();
+      if (request && cache.view==='explore') showReadingView(cache,document,'investigate');
+      return request;
+    });
   }
   for (const [id,name] of Object.entries(draftControls)) {
     const input = document.getElementById(id);
@@ -245,7 +273,10 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
     document.getElementById(`row-${button.dataset.select}`).classList.toggle('selected',chosen);
     if (chosen) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');
     if (!cache.buttons.has(button)) {
-      button.addEventListener('click',()=>controller.select(Number(button.dataset.select)));
+      button.addEventListener('click',()=>{
+        if (cache.view==='explore') showReadingView(cache,document,'investigate');
+        return controller.select(Number(button.dataset.select));
+      });
       cache.buttons.add(button);
     }
   });
@@ -260,10 +291,13 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
     document.getElementById('more')?.addEventListener('click',()=>controller.loadMore());
     cache.pagination = pagination;
   }
-  const heading = `<span class="selected-label">${icon('list')}${state.detailSource==='direct'?`ID 직접 조회 · Alert #${state.selected}`:'평가 상세'}</span>${state.detail.phase!=='idle'?`<button id="close" class="view-action" aria-label="상세 패널 닫기">${icon('close')}</button>`:''}`;
+  const heading = `<span class="selected-label">${icon('list')}${state.detailSource==='direct'?'ID 직접 조회':'평가 상세'}${state.selected!==null?` · Alert #${state.selected}`:''}</span>${state.detail.phase!=='idle'?`<button id="close" class="view-action" aria-label="상세 패널 닫기">${icon('close')}</button>`:''}`;
   if (cache.heading !== heading) {
     document.getElementById('detail-head').innerHTML = heading;
-    document.getElementById('close')?.addEventListener('click',()=>controller.close());
+    document.getElementById('close')?.addEventListener('click',()=>{
+      if (cache.view==='focus') showReadingView(cache,document,'investigate');
+      return controller.close();
+    });
     cache.heading = heading;
   }
   if (cache.detail !== state.detail) {

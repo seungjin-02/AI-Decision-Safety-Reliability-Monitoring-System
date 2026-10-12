@@ -100,7 +100,42 @@ try {
  assert.ok((await page.locator('#list-content').textContent()).includes('현재 조회 조건에 맞는 Alert가 없습니다.'));assert.ok((await page.locator('#detail-content').textContent()).includes('해당 Alert를 찾을 수 없습니다.'));check('direct 404 survives an independently successful empty list');
  await page.locator('#reset').click();await listAction(submit,{limit:'5',sort_order:'desc'});await direct(target);
  const layout=await page.evaluate(()=>{const a=document.querySelector('#master').getBoundingClientRect(),b=document.querySelector('#inspector').getBoundingClientRect();return {masterWidth:a.width,inspectorWidth:b.width,leftToRight:a.x<b.x,overflow:document.documentElement.scrollWidth>innerWidth,controls:[...document.querySelectorAll('#query-form input,#query-form select')].map(n=>({id:n.id,width:n.getBoundingClientRect().width,client:n.clientWidth,scroll:n.scrollWidth}))};});
- assert.ok(layout.leftToRight&&!layout.overflow);assert.ok(layout.controls.every(c=>c.width>=180));assert.equal(exceptions.length,0);
+ assert.ok(layout.leftToRight&&!layout.overflow);
+ assert.ok(layout.controls.every(c=>c.width>=(c.id.startsWith('created-')?210:100)));
+ const viewRequests=requests.length;
+ await page.locator('.summary-original summary').click();
+ await page.locator('#limit-input').fill('37');
+ await page.evaluate(()=>{window.savedRow=document.querySelector('.inbox-row');window.savedReason=document.querySelector('.summary-original');});
+ const savedDetail=await page.locator('#detail-content').innerHTML();
+ for(const view of ['explore','investigate','focus','investigate']){
+  await page.locator(`#view-${view}`).click();
+  assert.equal(await page.locator('#dashboard').getAttribute('data-layout'),view);
+  assert.equal(await page.locator(`#view-${view}`).getAttribute('aria-pressed'),'true');
+  assert.equal(await page.locator('#master').isVisible(),view!=='focus');
+  assert.equal(await page.locator('#query-tools').isVisible(),view!=='focus');
+  assert.equal(await page.locator('#inspector').isVisible(),view!=='explore');
+  assert.equal(await page.locator('#detail-content').innerHTML(),savedDetail);
+  assert.equal(await page.locator('#limit-input').inputValue(),'37');
+  assert.deepEqual(await page.evaluate(()=>({input:window.limitNode===document.querySelector('#limit-input'),id:window.idNode===document.querySelector('#alert-id'),row:window.savedRow===document.querySelector('.inbox-row'),reason:window.savedReason===document.querySelector('.summary-original'),open:document.querySelector('.summary-original').open})),{input:true,id:true,row:true,reason:true,open:true});
+  assert.equal(requests.length,viewRequests);
+  await page.screenshot({path:path.join(output,`view-${view}.png`),fullPage:true});
+ }
+ check('explore/investigate/focus preserve draft, original DOM and expanded reason without HTTP');
+ await page.locator('#view-focus').click();await page.locator('#close').click();
+ assert.equal(await page.locator('#dashboard').getAttribute('data-layout'),'investigate');await page.locator('.no-selection').waitFor();
+ assert.equal(requests.length,viewRequests);check('close in focus returns to investigation selection idle without HTTP');
+ await direct(target);
+ for(const width of [1920,1024,768,390]){
+  await page.setViewportSize({width,height:1000});
+  for(const view of ['explore','investigate','focus']){
+   await page.locator(`#view-${view}`).click();
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`no horizontal overflow at ${width} / ${view}`);
+  }
+ }
+ await page.screenshot({path:path.join(output,'view-mobile.png'),fullPage:true});
+ await page.setViewportSize({width:1440,height:1000});await page.locator('#view-investigate').click();
+ check('three views fit 1920/1024/768/390 widths without horizontal page overflow');
+ assert.equal(exceptions.length,0);
  const unexpected=consoleErrors.filter(e=>!(/Failed to load resource/.test(e.text)&&(/\/alerts(?:\?|\/)|\/favicon.ico/.test(e.url))));assert.deepEqual(unexpected,[]);
  assert.ok(devtools.some(e=>e.url.includes('cursor_alert_id')));assert.ok(devtools.some(e=>e.url.includes('created_from')));check('CDP Network records filters/dates/sort/cursor; no JS exceptions or unexpected console errors; query form fits desktop');
  await page.screenshot({path:path.join(output,'dashboard.png'),fullPage:true});
