@@ -59,7 +59,7 @@ test('more pending guards double click, retains data/detail and retries the same
   const c=createDashboard({list:async q=>{calls.push(q);if(++attempt===1)return page([5,4],2,true);if(attempt===2)return pending.promise;return page([3,2],2,true);},detail:async id=>alert(id)},sink.document);
   await c.load({limit:2});await c.select(5);const before=c.state.list.data,detail=c.state.detail,cursor=c.state.list.cursor;
   const more=sink.event('more','click');await c.loadMore();assert.equal(calls.length,2);assert.equal(c.state.list.data,before);assert.equal(c.state.detail,detail);
-  assert.ok(sink.root.innerHTML.includes('id="more" disabled'));pending.reject(Error());await more;
+  assert.equal(sink.document.getElementById('more').getAttribute('aria-disabled'),'true');pending.reject(Error());await more;
   assert.equal(c.state.list.cursor,cursor);assert.ok(sink.root.innerHTML.includes('추가 Alert를 불러오지 못했습니다.'));
   c.setQueryDraft('sort_order','asc');await sink.event('more','click');assert.deepEqual(calls[1],calls[2]);assert.equal(c.state.list.data.length,4);assert.equal(c.state.detail,detail);
 });

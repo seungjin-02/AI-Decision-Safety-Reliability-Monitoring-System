@@ -26,7 +26,7 @@ const settledDetail=id=>page.waitForFunction(id=>document.querySelector('#inspec
 async function listAction(action,expected,append=false){
  const before=listRequests().length,previous=append?await rows():[];
  const [response]=await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname==='/alerts'),action()]);
- await settled();await page.waitForFunction(()=>!document.querySelector('#more')?.disabled);
+ await settled();await page.waitForFunction(()=>document.querySelector('#more')?.getAttribute('aria-disabled')!=='true');
  assert.equal(listRequests().length,before+1);
  if(expected)assert.deepEqual(Object.fromEntries(new URL(response.url()).searchParams),expected);
  const body=await response.json();await page.waitForFunction(n=>document.querySelectorAll('[data-select]').length===n,previous.length+body.count);
@@ -135,6 +135,21 @@ try {
  await page.screenshot({path:path.join(output,'view-mobile.png'),fullPage:true});
  await page.setViewportSize({width:1440,height:1000});await page.locator('#view-investigate').click();
  check('three views fit 1920/1024/768/390 widths without horizontal page overflow');
+ const keyboardId=(await rows())[0];
+ await page.locator('#close').focus();await page.keyboard.press('Enter');
+ assert.equal(await page.evaluate(()=>document.activeElement.id),'alert-id');
+ await page.locator(`[data-select="${keyboardId}"]`).focus();await page.keyboard.press('Enter');await settledDetail(keyboardId);
+ assert.equal(await page.evaluate(()=>document.activeElement.id),'detail-head');
+ await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.id),'close');
+ await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.matches('.summary-original summary')),true);
+ await page.keyboard.press('Space');assert.equal(await page.locator('.summary-original').evaluate(n=>n.open),true);
+ await page.keyboard.press('Shift+Tab');await page.keyboard.press('Enter');
+ assert.equal(await page.evaluate(()=>Number(document.activeElement.dataset.select)),keyboardId);
+ await page.locator('#limit-input').focus();await page.locator('#limit-input').fill('101');
+ const beforeKeyboardInvalid=listRequests().length;await page.keyboard.press('Enter');
+ assert.equal(await page.evaluate(()=>document.activeElement.id),'query-error');assert.equal(listRequests().length,beforeKeyboardInvalid);
+ await page.locator('#limit-input').fill('5');await direct(target);
+ check('native keyboard detail open, raw Space, Shift+Tab close, opener restore and invalid-query focus');
  assert.equal(exceptions.length,0);
  const unexpected=consoleErrors.filter(e=>!(/Failed to load resource/.test(e.text)&&(/\/alerts(?:\?|\/)|\/favicon.ico/.test(e.url))));assert.deepEqual(unexpected,[]);
  assert.ok(devtools.some(e=>e.url.includes('cursor_alert_id')));assert.ok(devtools.some(e=>e.url.includes('created_from')));check('CDP Network records filters/dates/sort/cursor; no JS exceptions or unexpected console errors; query form fits desktop');
