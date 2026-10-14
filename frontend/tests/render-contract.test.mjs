@@ -137,3 +137,25 @@ test('direct ID opens investigation only for a valid request, and hidden loading
  assert.equal(sink.document.getElementById('dashboard').getAttribute('data-layout'),'focus');
  assert.ok(panel.innerHTML.includes(contract.statusText.notfound));assert.ok(!panel.innerHTML.includes('evt_review_018'));assert.equal(detailCalls,2);
 });
+
+test('long original text remains intact and invalid query/ID errors are associated with controls',async()=>{
+ const a=copy(18);a.event_id='event_'+('x'.repeat(600))+'EVENT_END';
+ a.reason_summary=('긴 원문 '.repeat(200))+'REASON_END <img onerror="bad()">';
+ a.signals[0].rule_id='unmapped_long_rule';a.signals[0].reason='사유'.repeat(300)+'SIGNAL_END';
+ a.signals[0].evidence.model_version='v'.repeat(600)+'EVIDENCE_END';
+ const snapshot=structuredClone(a),sink=documentSink();
+ const controller=createDashboard({list:async()=>list([a]),detail:async()=>a},sink.document,'api');
+ await controller.load();await sink.event('select-18','click');
+ const panel=sink.document.getElementById('detail-content').innerHTML;
+ for(const ending of ['EVENT_END','REASON_END','SIGNAL_END','EVIDENCE_END'])assert.ok(panel.includes(ending));
+ assert.ok(panel.includes('&lt;img onerror=&quot;bad()&quot;&gt;'));assert.ok(!panel.includes('<img'));
+ assert.deepEqual(a,snapshot);
+ const retained=controller.state.detail;
+ sink.event('limit-input','input','101');await sink.event('query-form','submit');
+ assert.ok(sink.document.getElementById('query-error').innerHTML.includes('1~100'));
+ for(const id of ['limit-input','sort-order','level','human','created-from','created-to'])assert.equal(sink.document.getElementById(id).getAttribute('aria-describedby'),'query-error');
+ sink.event('alert-id','input','bad');await sink.event('id-form','submit');
+ assert.equal(sink.document.getElementById('alert-id').getAttribute('aria-describedby'),'id-note');
+ assert.equal(sink.document.getElementById('id-note').getAttribute('role'),'alert');
+ assert.equal(controller.state.detail,retained);
+});

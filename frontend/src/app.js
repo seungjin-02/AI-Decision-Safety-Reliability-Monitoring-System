@@ -45,7 +45,7 @@ function queryInputs(state) {
     </div>
     <p class="input-note">개수 1~100 · Alert 저장 시각 기준 · 시작 포함 / 종료 미포함</p>
     <div class="query-actions"><button type="submit">조회</button><button type="button" id="reset" class="filter-reset">필터 초기화</button><span id="query-dirty" role="status"></span></div>
-    <p id="query-error" class="input-error" role="alert"></p>
+    <p id="query-error" class="input-error" role="alert" tabindex="-1"></p>
     <p id="applied-query" class="applied-query"></p>
   </form>`;
 }
@@ -212,6 +212,26 @@ function showReadingView(cache, document, view) {
     const node = document.getElementById(id);
     if (hidden) node.setAttribute('hidden',''); else node.removeAttribute('hidden');
   }
+  if (document.activeElement?.closest?.('[hidden]')) document.getElementById(`view-${view}`).focus();
+}
+// Only explicit user actions move focus. Async renders retain the same anchor.
+function openDetail(cache, document, request, opener) {
+  if (!request) return;
+  cache.detailOpener = opener;
+  if (cache.view==='explore') showReadingView(cache,document,'investigate');
+  document.getElementById('detail-head').focus();
+}
+function visible(element) {
+  return Boolean(element?.isConnected && !element.closest('[hidden]') && element.getClientRects().length);
+}
+function restoreDetailFocus(cache, document) {
+  const opener = cache.detailOpener;
+  const original = opener?.kind==='list'
+    ? [...document.querySelectorAll('[data-select]')].find(button=>Number(button.dataset.select)===opener.id)
+    : document.getElementById('alert-id');
+  const target = visible(original) ? original : document.getElementById('list-title');
+  (visible(target) ? target : document.getElementById(`view-${cache.view}`)).focus();
+  cache.detailOpener = null;
 }
 export function renderDashboard(state, document, controller, mode = 'mock') {
   const root = document.getElementById('app');
@@ -222,8 +242,8 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
       <header class="workspace-head"><div><p class="eyebrow">DECISION RELIABILITY / ALERTS</p><h1 id="view-title">Alert 탐색</h1><p class="workspace-description">조회 조건을 적용해 탐색하고, 선택한 Alert의 근거를 읽습니다.</p></div>
       <div class="reading-views" role="group" aria-label="화면 보기">${Object.entries(readingViews).map(([name,view])=>`<button id="view-${name}" type="button" aria-pressed="${name==='explore'}">${esc(view.label)}</button>`).join('')}</div></header>
       <section id="query-tools" class="query-tools" aria-label="Alert 조회"><div class="query-shell"><h2>조회 조건</h2>${queryInputs(state)}</div>${idInput(state)}</section>
-      <div class="split"><section id="master" class="master" aria-labelledby="list-title"><header class="master-head"><div class="list-heading"><h2 id="list-title">Alert 목록</h2><span class="sort">${icon('clock')}생성 시각 · KST</span></div></header><div id="list-content"></div><div id="pagination"></div><p class="master-foot">${policy}</p></section>
-      <aside id="inspector" class="inspector" aria-label="선택한 Alert 상세" hidden=""><div id="detail-head" class="inspector-head"></div><div id="detail-content"></div></aside></div></main>`;
+      <div class="split"><section id="master" class="master" aria-labelledby="list-title"><header class="master-head"><div class="list-heading"><h2 id="list-title" tabindex="-1">Alert 목록</h2><span class="sort">${icon('clock')}생성 시각 · KST</span></div><p class="list-reading-note">긴 사유는 최대 3줄, 식별자는 2줄로 표시합니다. 전체 내용은 상세에서 확인하세요.</p></header><div id="list-content"></div><div id="pagination"></div><p class="master-foot">${policy}</p></section>
+      <aside id="inspector" class="inspector" aria-label="선택한 Alert 상세" hidden=""><div id="detail-head" class="inspector-head" tabindex="-1" role="group" aria-labelledby="detail-target"></div><div id="detail-content"></div></aside></div></main>`;
     cache = {buttons: new WeakSet(),view:'explore'};
     rendered.set(root, cache);
     for (const name of Object.keys(readingViews)) {
@@ -235,12 +255,17 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
     }
     document.getElementById('reset').addEventListener('click',()=>controller.resetFilters());
     // Native submit covers both Enter and the submit button exactly once.
-    document.getElementById('query-form').addEventListener('submit',e=>{e.preventDefault();return controller.applyQuery();});
+    document.getElementById('query-form').addEventListener('submit',e=>{
+      e.preventDefault();const request=controller.applyQuery();
+      if (!request) document.getElementById('query-error').focus();
+      return request;
+    });
     document.getElementById('alert-id').addEventListener('input',e=>controller.setIdDraft(e.target.value));
     document.getElementById('id-form').addEventListener('submit',e=>{
       e.preventDefault();
       const request = controller.lookupId();
-      if (request && cache.view==='explore') showReadingView(cache,document,'investigate');
+      openDetail(cache,document,request,{kind:'direct'});
+      if (!request) document.getElementById('alert-id').focus();
       return request;
     });
   }
@@ -248,11 +273,16 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
     const input = document.getElementById(id);
     if (input.value !== state.draft[name]) input.value = state.draft[name];
     input.setAttribute('aria-invalid',String(Boolean(state.queryError)));
+    input.setAttribute('aria-describedby','query-error');
   }
   const idControl = document.getElementById('alert-id');
   if (idControl.value !== state.idInput.draft) idControl.value = state.idInput.draft;
   idControl.setAttribute('aria-invalid',String(Boolean(state.idInput.error)));
-  document.getElementById('id-note').textContent = state.idInput.error || '목록 조건과 별도로 양의 정수 ID를 조회합니다.';
+  const idNote=document.getElementById('id-note');
+  const idMessage=state.idInput.error || '목록 조건과 별도로 양의 정수 ID를 조회합니다.';
+  if (cache.idMessage!==idMessage) {idNote.textContent=idMessage;cache.idMessage=idMessage;}
+  idNote.classList.toggle('input-error',Boolean(state.idInput.error));
+  if (state.idInput.error) idNote.setAttribute('role','alert'); else idNote.removeAttribute('role');
   document.getElementById('query-dirty').textContent = queryIsDirty(state) ? '조회 조건 변경 · 미적용' : '';
   document.getElementById('query-error').textContent = state.queryError;
   const q = state.query;
@@ -274,41 +304,60 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
     if (chosen) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');
     if (!cache.buttons.has(button)) {
       button.addEventListener('click',()=>{
-        if (cache.view==='explore') showReadingView(cache,document,'investigate');
-        return controller.select(Number(button.dataset.select));
+        const id=Number(button.dataset.select),request=controller.select(id);
+        openDetail(cache,document,request,{kind:'list',id});
+        return request;
       });
       cache.buttons.add(button);
     }
   });
-  let pagination = '';
+  let pagination = '', moreMessage='', morePhase='idle';
   if (state.list.phase==='success') {
     const phase=state.list.more.phase;
     const message = phase==='loading'?'추가 Alert를 불러오는 중입니다.':phase==='error'?'추가 Alert를 불러오지 못했습니다.':phase==='invalid'?'추가 응답 데이터를 확인할 수 없습니다.':state.list.cursor?'':'더 불러올 Alert가 없습니다.';
-    pagination = `<span class="page-count">현재 불러온 ${state.list.data.length}건</span><p role="${['error','invalid'].includes(phase)?'alert':'status'}">${message}</p>${state.list.cursor?`<button id="more" ${phase==='loading'?'disabled':''}>${['error','invalid'].includes(phase)?'다시 시도':'더보기'}</button>`:''}`;
+    moreMessage=message;morePhase=phase;
+    pagination = `<span id="page-count" class="page-count">현재 불러온 ${state.list.data.length}건</span><p id="more-status" role="${['error','invalid'].includes(phase)?'alert':'status'}">${message}</p>${state.list.cursor?`<button id="more" aria-disabled="${phase==='loading'}">${['error','invalid'].includes(phase)?'다시 시도':'더보기'}</button>`:''}`;
   }
   if (cache.pagination !== pagination) {
-    document.getElementById('pagination').innerHTML = pagination;
-    document.getElementById('more')?.addEventListener('click',()=>controller.loadMore());
+    const previousMore=document.getElementById('more');
+    const moreFocused=previousMore && document.activeElement===previousMore;
+    if (previousMore && state.list.phase==='success' && state.list.cursor) {
+      document.getElementById('page-count').textContent=`현재 불러온 ${state.list.data.length}건`;
+      const status=document.getElementById('more-status');status.textContent=moreMessage;
+      status.setAttribute('role',['error','invalid'].includes(morePhase)?'alert':'status');
+      previousMore.textContent=['error','invalid'].includes(morePhase)?'다시 시도':'더보기';
+      previousMore.setAttribute('aria-disabled',String(morePhase==='loading'));
+    } else {
+      document.getElementById('pagination').innerHTML = pagination;
+      document.getElementById('more')?.addEventListener('click',()=>controller.loadMore());
+      if (moreFocused) document.getElementById('list-title').focus();
+    }
     cache.pagination = pagination;
   }
-  const heading = `<span class="selected-label">${icon('list')}${state.detailSource==='direct'?'ID 직접 조회':'평가 상세'}${state.selected!==null?` · Alert #${state.selected}`:''}</span>${state.detail.phase!=='idle'?`<button id="close" class="view-action" aria-label="상세 패널 닫기">${icon('close')}</button>`:''}`;
+  const heading = `<span id="detail-target" class="selected-label">${icon('list')}${state.detailSource==='direct'?'ID 직접 조회':'평가 상세'}${state.selected!==null?` · Alert #${state.selected}`:''}</span>${state.detail.phase!=='idle'?`<button id="close" class="view-action" aria-label="상세 패널 닫기"><span>닫기</span>${icon('close')}</button>`:''}`;
   if (cache.heading !== heading) {
     document.getElementById('detail-head').innerHTML = heading;
     document.getElementById('close')?.addEventListener('click',()=>{
       if (cache.view==='focus') showReadingView(cache,document,'investigate');
-      return controller.close();
+      controller.close();restoreDetailFocus(cache,document);
     });
     cache.heading = heading;
   }
   if (cache.detail !== state.detail) {
     document.getElementById('detail-content').innerHTML = state.detail.phase==='success' ? detail(state.detail.data) : state.detail.phase==='idle' ? `<div class="no-selection">${icon('list')}<h2>검토할 Alert를 선택하세요</h2><p>목록의 상세 보기를 누르면 평가 사유와 판단 근거가 표시됩니다.</p></div>` : stateMessage(state.detail.phase,'detail');
-    document.getElementById('retry-detail')?.addEventListener('click',()=>controller.retryDetail());
+    document.getElementById('retry-detail')?.addEventListener('click',()=>{
+      const request=controller.retryDetail();
+      openDetail(cache,document,request,cache.detailOpener||{kind:state.detailSource,id:state.selected});
+      return request;
+    });
     cache.detail = state.detail;
   }
   // Only a changed list region can create a new first-page retry button.
   const retry = document.getElementById('retry-list');
   if (retry && !cache.buttons.has(retry)) {
-    retry.addEventListener('click',()=>controller.retryList()); cache.buttons.add(retry);
+    retry.addEventListener('click',()=>{
+      const request=controller.retryList();document.getElementById('list-title').focus();return request;
+    }); cache.buttons.add(retry);
   }
 }
 
