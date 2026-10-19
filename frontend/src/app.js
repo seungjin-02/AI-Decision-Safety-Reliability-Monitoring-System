@@ -4,6 +4,7 @@ const paths = {
   mark:'<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/>',
   arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>',
   down:'<path d="m7 10 5 5 5-5"/>',
+  up:'<path d="M12 20V4m-6 6 6-6 6 6"/>',
   critical:'<path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v4m0 4h.01"/>',
   warn:'<path d="m12 3 9 9-9 9-9-9 9-9Z"/><path d="M12 8v5m0 3h.01"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',
@@ -54,7 +55,7 @@ function idInput(state) {
     <label for="alert-id">Alert ID</label>
     <div class="query-line"><input id="alert-id" type="text" inputmode="numeric" autocomplete="off" value="${esc(state.idInput.draft)}" aria-describedby="id-note" aria-invalid="${Boolean(state.idInput.error)}">
     <button type="submit">상세 조회</button></div>
-    <p id="id-note" class="input-note ${state.idInput.error ? 'input-error' : ''}" ${state.idInput.error ? 'role="alert"' : ''}>${esc(state.idInput.error || '목록 조건과 별도로 양의 정수 ID를 조회합니다.')}</p>
+    <p id="id-note" class="input-note ${state.idInput.error ? 'input-error' : ''}" ${state.idInput.error ? 'role="alert"' : ''}>${esc(state.idInput.error || '')}</p>
     </form>`;
 }
 function rows(items, selected) {
@@ -239,13 +240,26 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
   if (!cache) {
     root.innerHTML = `<header class="mast"><div class="identity"><span class="mark">${icon('mark')}</span><span>AI 의사결정 모니터</span></div><div class="mast-right"><span class="small">내부 운영</span><span class="mast-divider"></span><span class="environment">${mode==='api'?'로컬 API 연결':'예시 데이터'}</span><span class="prototype-note">C2 · 검토용</span></div></header>
       <main id="dashboard" class="dashboard" data-layout="explore">
-      <header class="workspace-head"><div><p class="eyebrow">DECISION RELIABILITY / ALERTS</p><h1 id="view-title">Alert 탐색</h1><p class="workspace-description">조회 조건을 적용해 탐색하고, 선택한 Alert의 근거를 읽습니다.</p></div>
+      <header class="workspace-head"><div><p class="eyebrow">DECISION RELIABILITY / ALERTS</p><h1 id="view-title" tabindex="-1">Alert 탐색</h1></div>
       <div class="reading-views" role="group" aria-label="화면 보기">${Object.entries(readingViews).map(([name,view])=>`<button id="view-${name}" type="button" aria-pressed="${name==='explore'}">${esc(view.label)}</button>`).join('')}</div></header>
       <section id="query-tools" class="query-tools" aria-label="Alert 조회"><div class="query-shell"><h2>조회 조건</h2>${queryInputs(state)}</div>${idInput(state)}</section>
-      <div class="split"><section id="master" class="master" aria-labelledby="list-title"><header class="master-head"><div class="list-heading"><h2 id="list-title" tabindex="-1">Alert 목록</h2><span class="sort">${icon('clock')}생성 시각 · KST</span></div><p class="list-reading-note">긴 사유는 최대 3줄, 식별자는 2줄로 표시합니다. 전체 내용은 상세에서 확인하세요.</p></header><div id="list-content"></div><div id="pagination"></div><p class="master-foot">${policy}</p></section>
-      <aside id="inspector" class="inspector" aria-label="선택한 Alert 상세" hidden=""><div id="detail-head" class="inspector-head" tabindex="-1" role="group" aria-labelledby="detail-target"></div><div id="detail-content"></div></aside></div></main>`;
+      <div class="split"><section id="master" class="master" aria-labelledby="list-title"><header class="master-head"><div class="list-heading"><h2 id="list-title" tabindex="-1">Alert 목록</h2><span class="sort">${icon('clock')}생성 시각 · KST</span></div></header><div id="list-content"></div><div id="pagination"></div><p class="master-foot">${policy}</p></section>
+      <aside id="inspector" class="inspector" aria-label="선택한 Alert 상세" hidden=""><div id="detail-head" class="inspector-head" tabindex="-1" role="group" aria-labelledby="detail-target"></div><div id="detail-content"></div></aside></div>
+      <button id="back-to-top" class="back-to-top" type="button" hidden>${icon('up')}<span>맨 위로</span></button></main>`;
     cache = {buttons: new WeakSet(),view:'explore'};
     rendered.set(root, cache);
+    const viewport = document.defaultView;
+    const topButton = document.getElementById('back-to-top');
+    const updateTopButton = () => {
+      if (viewport.scrollY > 600) topButton.removeAttribute('hidden');
+      else topButton.setAttribute('hidden','');
+    };
+    viewport?.addEventListener('scroll',updateTopButton,{passive:true});
+    if (viewport) updateTopButton();
+    topButton.addEventListener('click',()=>{
+      document.getElementById('view-title').focus({preventScroll:true});
+      viewport?.scrollTo({top:0,behavior:'instant'});
+    });
     for (const name of Object.keys(readingViews)) {
       document.getElementById(`view-${name}`).addEventListener('click',()=>showReadingView(cache,document,name));
     }
@@ -279,7 +293,7 @@ export function renderDashboard(state, document, controller, mode = 'mock') {
   if (idControl.value !== state.idInput.draft) idControl.value = state.idInput.draft;
   idControl.setAttribute('aria-invalid',String(Boolean(state.idInput.error)));
   const idNote=document.getElementById('id-note');
-  const idMessage=state.idInput.error || '목록 조건과 별도로 양의 정수 ID를 조회합니다.';
+  const idMessage=state.idInput.error || '';
   if (cache.idMessage!==idMessage) {idNote.textContent=idMessage;cache.idMessage=idMessage;}
   idNote.classList.toggle('input-error',Boolean(state.idInput.error));
   if (state.idInput.error) idNote.setAttribute('role','alert'); else idNote.removeAttribute('role');
