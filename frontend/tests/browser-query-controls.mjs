@@ -1,10 +1,10 @@
-// Playwright CLI QA against the explicitly retained, isolated Day9 TCP evidence.
+// Browser regression against verify-query-controls.py isolated HTTP evidence.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
-const {values}=parseArgs({options:{evidence:{type:'string'},output:{type:'string'},playwright:{type:'string'},baseline:{type:'string'}}});
+const {values}=parseArgs({options:{evidence:{type:'string'},output:{type:'string'},playwright:{type:'string'}}});
 assert.ok(values.evidence&&values.output);
 const evidence=JSON.parse(fs.readFileSync(values.evidence,'utf8'));
 assert.ok(['127.0.0.1','localhost'].includes(new URL(evidence.base).hostname));assert.equal(evidence.row_count,240);
@@ -39,16 +39,7 @@ async function direct(id){
  const [response]=await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname===`/alerts/${id}`),page.locator('#id-form button').click()]);
  assert.equal(new URL(response.url()).search,'');if(response.ok())await settledDetail(id);return response;
 }
-let baseline=null;
 try {
- if(values.baseline){
-  assert.ok(['127.0.0.1','localhost'].includes(new URL(values.baseline).hostname));
-  const old=await context.newPage();await old.goto(values.baseline+'?mode=mock');await old.locator('.detail-intro').waitFor();
-  await old.evaluate(()=>window.originalInput=document.querySelector('#limit-input'));
-  await old.locator('#limit-input').fill('123');await old.locator('#limit-input').focus();await old.keyboard.press('Home');await old.keyboard.press('ArrowRight');await old.keyboard.type('98');
-  baseline=await old.evaluate(()=>({sameNode:window.originalInput===document.querySelector('#limit-input'),originalConnected:window.originalInput.isConnected,type:document.querySelector('#limit-input').type,caret:document.querySelector('#limit-input').selectionStart,value:document.querySelector('#limit-input').value}));
-  assert.equal(baseline.sameNode,false);assert.equal(baseline.originalConnected,false);assert.equal(baseline.caret,null);await old.close();check('Day8 baseline: input node replaced, number input has no selection API; observed middle edit recorded');
- }
  await page.goto(evidence.base+'/dashboard/');await settled();assert.equal((await rows()).length,5);
  assert.deepEqual(Object.fromEntries(new URL(listRequests()[0]).searchParams),{limit:'5',sort_order:'desc'});
  assert.ok((await page.locator('.identity').textContent()).includes('AI 의사결정 모니터'));
@@ -154,6 +145,6 @@ try {
  const unexpected=consoleErrors.filter(e=>!(/Failed to load resource/.test(e.text)&&(/\/alerts(?:\?|\/)|\/favicon.ico/.test(e.url))));assert.deepEqual(unexpected,[]);
  assert.ok(devtools.some(e=>e.url.includes('cursor_alert_id')));assert.ok(devtools.some(e=>e.url.includes('created_from')));check('CDP Network records filters/dates/sort/cursor; no JS exceptions or unexpected console errors; query form fits desktop');
  await page.screenshot({path:path.join(output,'dashboard.png'),fullPage:true});
- fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'PASS',browser:browser.version(),baseline,checks,requests,devtools,consoleErrors,exceptions,layout},null,2));
-} catch(error){await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'FAIL',checks,error:String(error),baseline,requests,consoleErrors,exceptions},null,2));throw error;}
+ fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'PASS',browser:browser.version(),checks,requests,devtools,consoleErrors,exceptions,layout},null,2));
+} catch(error){await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});fs.writeFileSync(path.join(output,'browser-evidence.json'),JSON.stringify({status:'FAIL',checks,error:String(error),requests,consoleErrors,exceptions},null,2));throw error;}
 finally{await context.close();await browser.close();}
