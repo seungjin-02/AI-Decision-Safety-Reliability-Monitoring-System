@@ -12,6 +12,8 @@ GET  /alerts/{alert_id}
 GET  /alerts
 ```
 
+세 API의 OpenAPI 명세는 `/openapi.json`, Swagger UI는 `/docs`에서 확인한다. 전용 오류 응답은 아래 `ErrorResponse` 모델로 명시한다. 별도로 `/dashboard/`에서 조회 화면의 정적 파일을 제공한다. 빌드 누락 시 이 정적 경로의 503은 일반 텍스트 안내이며 API의 JSON 오류 형식과 구분한다.
+
 ---
 
 ## 1. API의 역할
@@ -354,6 +356,8 @@ escalate_incident
 ## 11. 오류 응답 필드 (`ErrorResponse`)
 
 에러 응답은 `ErrorResponse` schema를 따른다.
+
+OpenAPI에는 `POST /evaluate`의 400·422·500, `GET /alerts/{alert_id}`의 404·422·500, `GET /alerts`의 422·500을 이 모델로 정의한다. 422는 FastAPI 기본 `HTTPValidationError` 대신 실제 전용 오류 형식을 안내한다. 이 선언은 문서용 명세이며 예외 처리와 실제 응답 생성은 기존 exception handler가 담당한다.
 
 | 필드 | 타입 | 의미 |
 |---|---|---|

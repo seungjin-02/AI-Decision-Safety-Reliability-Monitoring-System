@@ -40,7 +40,7 @@
 
 ## 2. 테스트 디렉터리
 
-테스트는 여섯 영역으로 분리되어 있다.
+`tests/`의 Python 테스트는 여섯 영역으로 분리되어 있다. 프론트 테스트와 실행기는 `frontend/tests/`에서 별도로 검증한다.
 
 ```text
 tests/
@@ -520,6 +520,9 @@ test_api_validation.py
 test_core_validation_error.py
 test_system_error.py
 test_get_alerts.py
+test_alert_pagination.py
+test_dashboard.py
+test_openapi_contract.py
 ```
 
 - `POST /evaluate`: 정상 요청은 SQLite에 저장되고 `201`을 반환한다. 응답 `alert_id`, `created_at` 및 `trace_id`를 검증한다.
@@ -528,8 +531,24 @@ test_get_alerts.py
 - commit 후 응답 검증 실패 `500`: HTTP 오류와 DB commit을 구분한다.
 - `GET /alerts/{alert_id}`, `GET /alerts`: 단건 조회, `404`, 필터, 커서 페이지 이동과 입력 검증을 확인한다.
 - 요청 로그: 요청마다 `request_completed` 한 건과 `status_code`, `result`, `failure_stage`, `persistence_outcome`을 검증한다. 평가 성공 경로에서 헤더·본문·로그·DB의 `trace_id` 연결을 확인한다. 조회 성공 시 본문의 alert 생성 ID와 현재 조회 헤더 ID가 서로 다른 것도 검증한다.
+- OpenAPI: endpoint별 전용 오류 상태와 `ErrorResponse` 참조를 확인하고, 실제 422 본문·헤더가 공개한 모델과 일치하는지 대조한다.
+- 정적 제공: 빌드 없음의 503, dist 밖의 파일 비공개, 기존 API 유지와 빌드 파일 제공을 확인한다. 생성물 검증은 빌드가 없으면 skip되므로 CI에서는 빌드를 먼저 수행한다.
 
 `tests/DB_Test/`는 SQLite schema, foreign key, transaction rollback 및 repository 저장·조회를 검증한다. `tests/Benchmark_Test/`는 재현 가능한 workload와 manifest 계약을 검증한다. 측정 실행 및 결과 검증 절차는 [benchmark-contract.md](benchmark-contract.md)에 기록한다.
+
+### 프론트 검증과 증명 범위
+
+| 검증 | 보호하는 범위 | 별도 확인이 필요한 범위 |
+|---|---|---|
+| `frontend/tests/*.test.mjs` | 실제 adapter·controller·render의 입력·응답 검증, 필터·더보기·상세 출처, 늦은 응답·포커스 의도, 서버 판단값 보존 | 제한된 DOM 대역을 사용하므로 실제 브라우저 레이아웃·포커스 동작 |
+| `output-safety.test.py` | HTML·속성·인라인 JSON의 동적 문자열 출력 안전성 | 실제 브라우저의 전체 보안·접근성 검증 |
+| `verify-core-examples.py` | 합성 여섯 예시와 실제 core 결과·GET 노출 계약 비교 | 모든 가능한 이벤트와 규칙 조합 |
+| `test_local_launcher.py` | DB 선택·기존 데이터 보존·포트 충돌·빌드/서버 호출 연결 | 실제 서버 프로세스와 브라우저 실행 |
+| `tests/API_Test/`의 TestClient | API·DB·오류·trace·정적 제공 | 실제 TCP 네트워크 |
+| `verify-query-controls.py` | 격리 DB·실제 TCP HTTP에서 240건 생성, 조건·양방향 페이지 이동·GET 결과 대조 | 브라우저 화면 조작 |
+| `browser-query-controls.mjs` | 실제 Chrome의 입력·이동·보기·포커스·네트워크 요청·화면 폭 검증 | 접근성 표준 전체 준수와 운영 배포 |
+
+CI는 빌드·Node 회귀·출력 안전성·core 비교·생성 JavaScript 구문·Python 테스트 및 실행기 검증을 실행한다. 실제 TCP HTTP·Chrome 검증은 별도 실행하며, CI 통과로 대신 보고하지 않는다. 데이터와 증거 파일을 보존하는 명령은 [프론트 안내](../frontend/README.md#검증)를 따른다.
 
 ---
 
@@ -591,11 +610,23 @@ recommended_actions includes:
 
 ## 11. 테스트 실행
 
-전체 테스트 실행:
+Python 기본 테스트 실행 (기본 대상은 `tests/`이며 프론트 전체 검증은 포함하지 않음):
 
 ```bash
 python -m pytest -v
 ```
+
+CI와 같은 자동 회귀 검증 (Python 환경과 Node.js 24, npm 패키지 설치 불필요):
+
+```bash
+python frontend/build_web.py
+node --test --test-isolation=none frontend/tests/*.test.mjs
+python -B frontend/tests/output-safety.test.py
+python -B frontend/tests/verify-core-examples.py
+python -m pytest -q tests frontend/tests/test_local_launcher.py
+```
+
+CI는 생성된 `frontend/dist/*.js`에 `node --check`도 적용한다. 위 명령은 실제 HTTP·브라우저 검증이나 벤치마크 측정 실행을 포함하지 않는다. `test_local_launcher.py`는 기본 `testpaths=tests` 밖에 있으므로 명시적으로 전달한다.
 
 Unit test만 실행:
 
@@ -727,7 +758,7 @@ core가 DB에 의존하지 않는지 여부
 
 ## 14. 요약
 
-이 프로젝트의 테스트 전략은 core, API, 저장소 및 고정 workload를 함께 검증한다.
+이 프로젝트의 테스트 전략은 core, API, 저장소, 고정 workload 및 조회 대시보드를 검증한다.
 
 - 각 step의 기능이 올바르게 동작하는지 확인한다.
 - 전체 core pipeline이 대표 케이스에서 설계대로 연결되는지 확인한다.

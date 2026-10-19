@@ -11,9 +11,12 @@
 
 ## 1. 전체 흐름
 
-현재 시스템은 API, 평가, 저장 계층으로 나뉜다.
+현재 시스템은 조회 대시보드, API, 평가, 저장 계층으로 나뉜다.
 
 ```text
+Dashboard Frontend
+→ 저장된 alert 조회와 서버 판단 결과 표시 담당
+
 FastAPI API Layer
 → HTTP request / response contract 담당
 
@@ -48,10 +51,28 @@ Client
 - 최종 해석은 Gate Interpretation에서만 수행한다.
 - Action Generation은 판단을 다시 하지 않고 운영 행동으로 번역한다.
 - Alert Output은 결과를 재계산하지 않고 조립만 한다.
+- 대시보드는 GET 조회 결과를 표시하며 core 판단과 저장을 수행하지 않는다.
 
 ---
 
 ## 2. 계층별 책임
+
+### 조회 대시보드
+
+프론트는 별도 프레임워크나 서버 없이 JavaScript 모듈과 CSS로 구성된다. 같은 FastAPI 서버의 `/dashboard/`에서 정적 파일을 제공하고, API 루트 기준 상대 경로로 목록·상세를 조회한다. CORS나 별도 프론트 서버는 필요하지 않다.
+
+| 구성 | 책임 |
+|---|---|
+| `frontend/src/entry.js` | 기본 API 모드와 명시적 mock 모드 선택, 초기 조회 |
+| `api-adapter.js` / `mock-adapter.js` | HTTP 조회 또는 합성 예시 응답 제공 |
+| `display-contract.mjs`의 controller | 입력·응답 검증, draft와 적용 조건, 목록·상세·커서 상태, 늦은 응답 차단 |
+| `app.js`의 render | 표시·이벤트·보기 전환·포커스 관리 |
+
+목록 조회는 서버에 필터·정렬·커서를 전달한다. 응답 순서와 level·human_required·점수·권장 조치는 서버 결과를 보존한다. 목록 선택 상세와 ID 직접 조회의 출처를 구분하고, 직접 조회 상세는 목록 조건 변경과 독립적으로 유지한다. 세부 상태와 표시 계약은 [frontend/DESIGN.md](../frontend/DESIGN.md)를 따른다.
+
+`frontend/build_web.py`는 `src/`와 `fixtures/`에서 정적 파일을 생성한다. `app/main.py`는 Git 제외 생성물인 `frontend/dist/`만 제공하며 원본·DB 디렉터리를 정적으로 공개하지 않는다. 빌드가 없으면 `/dashboard/`는 503과 일반 텍스트 안내를 반환하고 API는 별도로 동작한다. 실행기 `c2_dashboard_local.py`는 빌드와 명시한 시연 DB 선택을 연결한다. 실행기의 DB 선택은 lifespan 초기화와 repository 양쪽에 적용된다.
+
+API 실패를 mock으로 대체하지 않으며, 화면에는 평가 생성·승인·검토 완료 기능이 없다. 수동 조회 화면이고 자동 새로고침이나 실시간 push는 제공하지 않는다. 인증·권한은 아직 구현되지 않았으므로 ‘조회 화면’이라는 설명 자체가 접근 통제를 의미하지는 않는다.
 
 ### API 계층
 
@@ -147,7 +168,9 @@ core/
 
 ### 저장된 alert 조회
 
-`GET /alerts/{alert_id}`는 ID로 alert를 조회하고, 없으면 `404 alert_not_found`를 반환한다. `GET /alerts`는 `limit`, `level`, `human_required`, 시각 범위, 두 필드로 구성된 커서를 받아 목록과 `next_cursor`를 반환한다. 두 경로 모두 core 평가를 다시 실행하지 않는다. 저장된 alert의 `trace_id`는 생성 요청의 ID이며, 응답 헤더와 조회 로그의 `trace_id`는 현재 조회 요청의 ID다.
+`GET /alerts/{alert_id}`는 ID로 alert를 조회하고, 없으면 `404 alert_not_found`를 반환한다. `GET /alerts`는 `limit`, `level`, `human_required`, 시각 범위, `sort_order`, 두 필드로 구성된 커서를 받아 목록과 `next_cursor`를 반환한다. 두 경로 모두 core 평가를 다시 실행하지 않는다. 저장된 alert의 `trace_id`는 생성 요청의 ID이며, 응답 헤더와 조회 로그의 `trace_id`는 현재 조회 요청의 ID다.
+
+대시보드의 사용자 입력은 controller의 검증과 조건 적용을 거쳐 adapter의 GET 요청이 된다. API는 repository에서 저장값을 읽고 조회 스키마로 변환한다. 이때 alert·signal의 metadata는 제외하고 evidence는 규칙별 허용 필드만 제공한다. 응답은 controller 검증 후 render에 전달된다. GET은 DB 쓰기를 하지 않으므로 요청 로그의 `persistence_outcome`은 `not_attempted`다.
 
 ---
 
@@ -720,6 +743,9 @@ EvaluateResponse-compatible dict
 | Layer / Step | Responsibility |
 |---|---|
 | FastAPI App | route, middleware, exception handler |
+| Dashboard Adapter | 같은 출처의 GET 또는 명시적 mock 응답 |
+| Dashboard Controller | 입력·응답 검증, 조회 상태, 늦은 응답 차단 |
+| Dashboard Render | 판단값 보존 표시, 이벤트·포커스·읽기 보기 |
 | API Schema | request / response contract |
 | Evaluation Service | API schema와 core model 사이 변환 |
 | AlertRepository | SQLite 저장, rollback, 단건 및 목록 조회 |
@@ -752,8 +778,10 @@ EvaluateResponse-compatible dict
 - alert output은 결과를 재계산하지 않는다.
 - core는 API, HTTP, DB를 모른다.
 - API response는 내부 core 객체를 그대로 노출하지 않는다.
+- 프론트는 서버의 level·human_required·점수·권장 조치를 재계산하지 않는다.
+- 조회 응답의 생성 trace와 현재 GET 요청 trace를 구분한다.
 
-이 제약은 unit, integration, design invariant, API, DB test로 보호된다.
+이 제약은 unit, integration, design invariant, API, DB 및 프론트 회귀 테스트로 보호된다. 실제 브라우저 검증은 Node의 DOM 대역 테스트와 별도로 수행한다.
 
 ---
 
@@ -775,6 +803,8 @@ EvaluateResponse-compatible dict
 - FastAPI API layer
 - /evaluate endpoint
 - GET /alerts 및 GET /alerts/{alert_id}
+- 같은 출처의 /dashboard/ 및 Python 기반 정적 파일 빌드
+- 조건 적용·더보기·ID 상세 조회·탐색/조사/집중 읽기 보기
 - SQLite 저장과 transaction rollback
 - trace_id middleware
 - 요청 완료 구조화 JSON 로그
@@ -785,6 +815,8 @@ EvaluateResponse-compatible dict
 - pytest 기반 design invariant tests
 - pytest 기반 API tests
 - pytest 기반 DB 및 benchmark workload tests
+- 프론트 상태·렌더링·출력 안전성·core 예시·실행기 검증
+- 프론트 빌드와 자동 회귀 검증을 포함한 CI
 ```
 
 현재 포함되지 않은 것:
