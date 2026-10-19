@@ -12,6 +12,24 @@ const copy = id => structuredClone(alerts.find(a=>a.alert_id===id));
 const list = items => ({count:items.length,limit:5,alerts:items,next_cursor:null});
 const defer = () => {let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject};};
 import {documentSink} from './dom-sink.mjs';
+test('back to top only changes scrolling and focus; removed help leaves ID errors available',async()=>{
+ const sink=documentSink();const scrollHandlers=[];let calls=0;
+ const viewport={scrollY:0,addEventListener(name,handler){if(name==='scroll')scrollHandlers.push(handler);},scrollTo(options){assert.equal(options.top,0);this.scrollY=0;scrollHandlers.forEach(fn=>fn());}};
+ sink.document.defaultView=viewport;
+ const controller=createDashboard({list:async()=>{calls++;return list([copy(18)]);},detail:async()=>{calls++;return copy(18);}},sink.document);
+ await controller.load();await controller.select(18);
+ for(const text of ['긴 사유는 최대 3줄','조회 조건을 적용해 탐색하고','목록 조건과 별도로 양의 정수'])assert.ok(!sink.root.innerHTML.includes(text));
+ const button=sink.document.getElementById('back-to-top');
+ assert.notEqual(button.getAttribute('hidden'),null);
+ viewport.scrollY=900;scrollHandlers[0]();assert.equal(button.getAttribute('hidden'),null);
+ controller.setQueryDraft('limit','20');const snapshot=structuredClone(controller.state),before=calls;
+ await sink.event('back-to-top','click');assert.equal(viewport.scrollY,0);
+ assert.equal(sink.document.activeElement.id,'view-title');assert.notEqual(button.getAttribute('hidden'),null);
+ assert.deepEqual(controller.state,snapshot);assert.equal(calls,before);assert.equal(scrollHandlers.length,1);
+ controller.setIdDraft('bad');await sink.event('id-form','submit');
+ assert.equal(sink.document.getElementById('id-note').getAttribute('role'),'alert');
+ assert.ok(sink.document.getElementById('id-note').innerHTML.includes('양의 정수'));
+});
 function harness(adapter) {
  const sink=documentSink();const controller=createDashboard(adapter,sink.document);
  return {controller,html:()=>sink.root.innerHTML,panel:()=>sink.root.innerHTML.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1]??'',click:id=>sink.event(id,'click')};
