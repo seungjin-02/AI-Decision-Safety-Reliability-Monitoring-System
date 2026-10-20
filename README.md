@@ -1,6 +1,6 @@
 # AI-Decision-Safety-Reliability-Monitoring-System
 
-AI 의사결정 과정에서 발생할 수 있는 **위험 신호(Risk Signal)**, **불확실성(Uncertainty)**, **인간 검토 필요 여부(Human Review Requirement)** 를 분리해 구조화하고, 저장된 결과를 한국어 대시보드에서 조회하는 FastAPI 기반 MVP 프로젝트입니다.
+AI 의사결정 과정에서 발생할 수 있는 **위험 신호(Risk Signal)**, **불확실성(Uncertainty)**, **인간 검토 필요 여부(Human Review Requirement)** 를 분리해 구조화하고, 저장된 결과를 대시보드에서 조회하는 FastAPI 기반 MVP 프로젝트입니다.
 
 이 프로젝트는 AI의 결정을 자동 승인하거나 거절하는 시스템이 아닙니다.
 대신 AI 또는 자동화 시스템의 판단 결과를 그대로 신뢰하기 전에 어떤 위험 신호가 관측되었고 어떤 정보가 부족하며 어디서 인간 검토가 필요한지를 명확하게 드러내는 것을 목표로 합니다.
