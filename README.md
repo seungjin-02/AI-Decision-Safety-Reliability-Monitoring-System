@@ -603,7 +603,6 @@ tests/
     test_get_alerts.py
     test_alert_pagination.py
     test_dashboard.py
-    test_openapi_contract.py
 
   DB_Test/
     test_connection.py

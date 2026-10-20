@@ -522,7 +522,6 @@ test_system_error.py
 test_get_alerts.py
 test_alert_pagination.py
 test_dashboard.py
-test_openapi_contract.py
 ```
 
 - `POST /evaluate`: 정상 요청은 SQLite에 저장되고 `201`을 반환한다. 응답 `alert_id`, `created_at` 및 `trace_id`를 검증한다.
@@ -531,7 +530,6 @@ test_openapi_contract.py
 - commit 후 응답 검증 실패 `500`: HTTP 오류와 DB commit을 구분한다.
 - `GET /alerts/{alert_id}`, `GET /alerts`: 단건 조회, `404`, 필터, 커서 페이지 이동과 입력 검증을 확인한다.
 - 요청 로그: 요청마다 `request_completed` 한 건과 `status_code`, `result`, `failure_stage`, `persistence_outcome`을 검증한다. 평가 성공 경로에서 헤더·본문·로그·DB의 `trace_id` 연결을 확인한다. 조회 성공 시 본문의 alert 생성 ID와 현재 조회 헤더 ID가 서로 다른 것도 검증한다.
-- OpenAPI: endpoint별 전용 오류 상태와 `ErrorResponse` 참조를 확인하고, 실제 422 본문·헤더가 공개한 모델과 일치하는지 대조한다.
 - 정적 제공: 빌드 없음의 503, dist 밖의 파일 비공개, 기존 API 유지와 빌드 파일 제공을 확인한다. 생성물 검증은 빌드가 없으면 skip되므로 CI에서는 빌드를 먼저 수행한다.
 
 `tests/DB_Test/`는 SQLite schema, foreign key, transaction rollback 및 repository 저장·조회를 검증한다. `tests/Benchmark_Test/`는 재현 가능한 workload와 manifest 계약을 검증한다. 측정 실행 및 결과 검증 절차는 [benchmark-contract.md](benchmark-contract.md)에 기록한다.
