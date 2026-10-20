@@ -9,16 +9,16 @@ FastAPI의 Alert를 조회하는 한국어 대시보드다. 목록 조회·더�
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe c2_dashboard_local.py
+.\.venv\Scripts\python.exe c2_dashboard_local.py --db data/demo-new.db --port 8001
 ```
 
-- 실행기가 화면을 자동 빌드하고 `http://127.0.0.1:8000/dashboard/`를 제공한다.
-- 기본 DB는 기존 `data/c2-demo.db`다. 파일이 없으면 오류로 종료하며, 예시 데이터를 자동 생성하지 않는다.
-- 새 빈 DB로 시작하려면 `--db data/demo-new.db --port 8001`처럼 경로를 명시한다. 기존 DB를 지정하면 재사용한다.
-- 실행기는 사용자 DB `data/alerts.db`를 거부한다. 이 DB로 API를 실행하려면 화면을 별도로 빌드한 뒤 `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`을 사용한다.
+- 위 명령은 화면을 자동 빌드하고 `http://127.0.0.1:8001/dashboard/`와 `/docs`를 제공한다. 새 경로이면 부모 폴더를 만들고 빈 DB로 시작하며, 기존 DB이면 재사용한다.
+- 예시 데이터를 자동 생성하지 않으므로 새 DB의 실제 API 목록은 비어 있다. Swagger의 `POST /evaluate`로 비민감 이벤트를 저장하거나, 화면 확인만 필요하면 `/dashboard/?mode=mock`을 사용한다.
+- DB 파일은 Git에 포함되지 않고 종료 후에도 남는다. 인자 없이 실행할 때의 기본값은 기존 `data/c2-demo.db`와 포트 8000이다. 해당 DB가 없으면 오류로 종료한다.
+- 실행기는 사용자 DB `data/alerts.db`를 거부한다. 이 DB로 직접 실행하려면 부모 폴더 `data`를 먼저 준비하고 화면을 빌드한다. 명령은 [메인 실행 안내](../README.md#api-서버-실행)를 따른다.
 - 포트 충돌은 기존 서버를 종료하거나 `--port`를 바꿔 해결한다. DB를 삭제할 필요는 없다. 종료는 Ctrl+C 또는 IDE의 정지 버튼을 사용한다.
 
-PyCharm에서는 프로젝트 인터프리터를 설정한 뒤 공유 실행 설정 `c2_dashboard_local` 또는 루트의 `c2_dashboard_local.py`를 실행한다.
+PyCharm에서는 프로젝트 인터프리터를 설정하고 루트의 `c2_dashboard_local.py`를 실행 대상으로, 저장소 루트를 작업 디렉터리로, `--db data/demo-new.db --port 8001`을 매개변수로 지정한다. `.idea`는 Git 제외 대상이므로 개인 실행 설정은 clone한 저장소에 포함되지 않는다.
 
 ## 실행 모드와 빌드
 
@@ -55,8 +55,10 @@ python frontend/build_web.py
 node --test --test-isolation=none frontend/tests/*.test.mjs
 python -B frontend/tests/output-safety.test.py
 python -B frontend/tests/verify-core-examples.py
-.\.venv\Scripts\python.exe -m pytest -q frontend/tests/test_local_launcher.py tests/API_Test/test_dashboard.py
+.\.venv\Scripts\python.exe -m pytest -q tests frontend/tests/test_local_launcher.py
 ```
+
+CI도 이 검증과 생성 JavaScript 구문 검사를 실행한다. 기본 `python -m pytest`만으로는 Node·출력 안전성·core 예시·실행기 검증 전체가 실행되지 않는다. Node 테스트에는 제한된 DOM 대역을 사용하므로 실제 Chrome의 레이아웃·포커스·네트워크 동작은 아래 브라우저 검증으로 별도 확인한다.
 
 실제 HTTP와 브라우저까지 확인할 때는 **새 빈 격리 DB**를 사용한다. 첫 명령은 별도 터미널에서 계속 실행하고, 나머지는 다른 터미널에서 순서대로 실행한다. HTTP 검증 스크립트가 합성 Alert 240건을 생성하므로 기존 사용자·시연 DB에는 실행하지 않는다.
 

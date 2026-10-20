@@ -12,6 +12,8 @@ GET  /alerts/{alert_id}
 GET  /alerts
 ```
 
+별도로 `/dashboard/`에서 조회 화면의 정적 파일을 제공한다. 빌드 누락 시 이 정적 경로의 503은 일반 텍스트 안내이며 API의 JSON 오류 형식과 구분한다.
+
 ---
 
 ## 1. API의 역할

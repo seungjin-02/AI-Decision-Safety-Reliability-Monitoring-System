@@ -1,6 +1,6 @@
 # AI-Decision-Safety-Reliability-Monitoring-System
 
-AI 의사결정 과정에서 발생할 수 있는 **위험 신호(Risk Signal)**, **불확실성(Uncertainty)**, **인간 검토 필요 여부(Human Review Requirement)** 를 분리해 구조화하는 FastAPI 기반 MVP 프로젝트입니다.
+AI 의사결정 과정에서 발생할 수 있는 **위험 신호(Risk Signal)**, **불확실성(Uncertainty)**, **인간 검토 필요 여부(Human Review Requirement)** 를 분리해 구조화하고, 저장된 결과를 대시보드에서 조회하는 FastAPI 기반 MVP 프로젝트입니다.
 
 이 프로젝트는 AI의 결정을 자동 승인하거나 거절하는 시스템이 아닙니다.
 대신 AI 또는 자동화 시스템의 판단 결과를 그대로 신뢰하기 전에 어떤 위험 신호가 관측되었고 어떤 정보가 부족하며 어디서 인간 검토가 필요한지를 명확하게 드러내는 것을 목표로 합니다.
@@ -143,7 +143,7 @@ failure signal
 
 ## 시스템 구조
 
-현재 시스템은 FastAPI API layer, core evaluation pipeline, SQLite persistence layer로 분리되어 있습니다.
+현재 시스템은 조회 대시보드, FastAPI API layer, core evaluation pipeline, SQLite persistence layer로 분리되어 있습니다.
 
 ```text
 Client
@@ -158,6 +158,8 @@ Client
 ```
 
 `/evaluate`는 평가 결과를 SQLite에 저장한 뒤 `201`을 반환합니다. 저장 실패 시 결과가 담긴 `PersistenceError`를 HTTP 오류로 변환합니다.
+
+대시보드는 같은 FastAPI 서버의 `/dashboard/`에서 제공하며, `GET /alerts`와 `GET /alerts/{alert_id}`로 저장된 결과를 읽습니다. 조건 입력·적용, 커서 기반 더보기, Alert ID 직접 상세 조회, 탐색·조사·집중 읽기 보기를 지원합니다. 서버의 수준·검토 여부·점수·권장 조치를 재계산하지 않으며 평가 생성·승인·처리 완료 기능은 제공하지 않습니다. 실행과 검증은 [프론트 안내](frontend/README.md), 화면 계약은 [표시 원칙](frontend/DESIGN.md)을 참고하세요.
 
 ### API 계층
 
@@ -455,7 +457,7 @@ recommended_actions:
 
 ## 테스트 전략
 
-테스트는 여섯 영역으로 구성되어 있습니다.
+Python 테스트는 `tests/`의 여섯 영역과 별도 프론트 실행기 테스트로 구성됩니다. 프론트 상태·렌더링 회귀는 Node 테스트로 검증하며, 실제 HTTP와 브라우저 검증은 별도로 실행합니다.
 
 ```text
 tests/
@@ -599,6 +601,8 @@ tests/
     test_core_validation_error.py
     test_system_error.py
     test_get_alerts.py
+    test_alert_pagination.py
+    test_dashboard.py
 
   DB_Test/
     test_connection.py
@@ -606,6 +610,16 @@ tests/
 
   Benchmark_Test/
     test_workload_generator.py
+
+frontend/
+  src/
+  fixtures/
+  tests/
+  build_web.py
+  README.md
+  DESIGN.md
+
+c2_dashboard_local.py
 
 benchmarks/
   generate_workload.py
@@ -629,6 +643,18 @@ docs/
 
 ## 실행 방법
 
+저장소 루트에서 Python 3.11 이상으로 실행합니다. Windows PowerShell의 첫 실행 예시는 다음과 같습니다.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe c2_dashboard_local.py --db data/demo-new.db --port 8001
+```
+
+명시한 DB 경로가 새 경로이면 실행기가 부모 폴더를 만들고 빈 DB로 시작합니다. 기존 DB를 지정하면 재사용하며 삭제·초기화하지 않습니다. 대시보드는 `http://127.0.0.1:8001/dashboard/`, Swagger는 `http://127.0.0.1:8001/docs`입니다. 예시 데이터를 자동 생성하지 않으므로 실제 API 모드의 첫 목록은 비어 있습니다. 합성 화면만 보려면 `/dashboard/?mode=mock`을 사용합니다.
+
+인자 없이 실행하려면 기존 `data/c2-demo.db`가 필요합니다. DB는 Git에 포함되지 않으며 실행 종료 후에도 파일로 남습니다. 실행기는 사용자 DB `data/alerts.db`를 거부합니다. 자세한 DB 선택·포트·IDE 안내는 [프론트 안내](frontend/README.md)를 따릅니다.
+
 ### 평가 함수 실행
 
 ```bash
@@ -637,9 +663,15 @@ python -m core.main
 
 ### API 서버 실행
 
-```bash
-uvicorn app.main:app --reload
+사용자 DB `data/alerts.db`로 직접 실행할 때는 먼저 부모 폴더를 준비합니다. Windows PowerShell 기준이며, `-Force`는 기존 폴더와 DB를 삭제하지 않습니다.
+
+```powershell
+New-Item -ItemType Directory -Force data | Out-Null
+.\.venv\Scripts\python.exe frontend/build_web.py
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+Linux/macOS에서는 가상환경의 Python으로 `mkdir -p data`, `python frontend/build_web.py`, `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`을 실행합니다. 빌드를 생략해도 API는 동작하지만 `/dashboard/`는 503과 빌드 안내를 반환합니다.
 
 Evaluate event:
 
@@ -663,11 +695,23 @@ curl -X POST http://127.0.0.1:8000/evaluate \
 
 ## 테스트 실행
 
-전체 테스트 실행:
+Python 기본 테스트 실행 (`pytest.ini`의 기본 대상은 `tests/`):
 
 ```bash
 python -m pytest -v
 ```
+
+CI와 같은 빌드·자동 회귀 검증은 Python 환경과 Node.js 24를 준비한 뒤 다음 순서로 실행합니다. npm 패키지 설치는 필요 없습니다.
+
+```bash
+python frontend/build_web.py
+node --test --test-isolation=none frontend/tests/*.test.mjs
+python -B frontend/tests/output-safety.test.py
+python -B frontend/tests/verify-core-examples.py
+python -m pytest -q tests frontend/tests/test_local_launcher.py
+```
+
+CI는 생성된 JavaScript의 `node --check`도 실행합니다. 빌드를 먼저 수행하므로 생성물 제공 테스트를 빌드 누락으로 건너뛰지 않습니다. 위 자동 검증은 실제 브라우저 조작이나 TCP HTTP 검증을 대신하지 않습니다. 해당 절차는 [프론트 안내](frontend/README.md#검증)를 참고하세요.
 
 Unit tests:
 
@@ -726,6 +770,8 @@ python -m pytest tests/Benchmark_Test -v
 - [API Contract](docs/api-contract.md)
 - [Benchmark Contract](docs/benchmark-contract.md)
 - [Benchmark Baseline](docs/benchmark-baseline.md)
+- [Dashboard 실행·검증](frontend/README.md)
+- [Dashboard 표시·상태 계약](frontend/DESIGN.md)
 
 ---
 
@@ -740,7 +786,7 @@ python -m pytest tests/Benchmark_Test -v
 - system failure를 risk score에 합산하기
 - 동적 threshold 최적화
 - 사용자 인증 / 권한 관리
-- 운영자 dashboard 제공
+- 자동 새로고침·실시간 push 방식의 dashboard
 - 배포 환경 제공
 
 대신 다음을 수행합니다.
@@ -757,6 +803,7 @@ python -m pytest tests/Benchmark_Test -v
 - transaction 실패 시 rollback 결과 구분
 - `/evaluate` 결과의 자동 저장과 alert 단건·목록 조회
 - 요청 단위 구조화 JSON 로그 기록
+- 저장된 평가 결과의 읽기 전용 대시보드 제공
 
 ---
 
@@ -771,11 +818,13 @@ python -m pytest tests/Benchmark_Test -v
 - 요청별 `trace_id`, 구조화 JSON 요약 로그 및 HTTP 오류 응답
 - 단위·통합·설계 불변 조건·API·DB·벤치마크 workload 테스트
 - 고정된 1,000건 workload와 3회 벤치마크 기준선, GitHub Actions CI
+- 같은 출처의 `/dashboard/`, 조건 조회·더보기·ID 상세 조회와 세 가지 읽기 보기
+- 프론트 상태·출력 안전성·core 예시 비교·실행기 검증의 CI 연결
 
 현재 제공하지 않는 항목은 다음과 같습니다 (구현 일정은 정하지 않았습니다).
 
 - 사용자 인증과 권한 관리
-- 운영자 대시보드
+- 자동 새로고침·실시간 갱신
 - 배포 자동화
 - 별도의 의존성 잠금 파일 (`requirements.txt`에는 버전이 명시되어 있음)
 - 외부 로그 수집·모니터링 시스템
